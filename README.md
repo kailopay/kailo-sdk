@@ -2,31 +2,22 @@
 
 Official TypeScript/Node.js SDK for the KailoPay sandbox and Stellar testnet API.
 
-> This first release is server-side only. Never ship a KailoPay API key in a browser or mobile bundle. The sandbox does not move real fiat value.
+> This release is server-side only. Never ship a KailoPay API key in a browser or mobile bundle. The sandbox does not move real fiat value.
 
 ## Status
 
-The repository is the Week 1 SDK foundation. It currently provides typed helpers for:
+The SDK provides typed helpers for:
 
 - on-ramp order creation;
 - off-ramp order creation;
 - quote preview;
 - order lookup and cursor-based listing;
+- SEP-24 asset information, interactive deposit and withdrawal starts, transaction lookup, and browser hand-off;
+- webhook signature verification for raw request bodies;
 - timeout handling and structured API errors;
 - `Authorization: Bearer pk_test_...` and `Idempotency-Key` headers.
 
 Developer dashboard, analytics, revenue, wallet-profile, and webhook-administration routes remain session-authenticated control-plane APIs. They will be added as a separate surface only when their public SDK contract is finalized.
-
-## Documentation
-
-Start with the [SDK quickstart](docs/quickstart.md). Use the [API reference](docs/api-reference.md) to look up client options, methods, types, and errors.
-
-- [Documentation map](docs/README.md)
-- [Authenticate securely](docs/authentication.md)
-- [Create and track orders](docs/orders.md)
-- [Receive webhook events](docs/webhooks.md)
-- [Run tests and local integrations](docs/testing.md)
-- [Changelog](CHANGELOG.md)
 
 ## Documentation
 
@@ -50,8 +41,14 @@ npm install @kailopay/sdk
 ```ts
 import { KailoPay, minorAmount } from "@kailopay/sdk";
 
+const apiKey = process.env.KAILOPAY_API_KEY;
+if (apiKey === undefined) {
+  throw new Error("KAILOPAY_API_KEY is required");
+}
+
 const kailo = new KailoPay({
-  apiKey: process.env.KAILOPAY_API_KEY,
+  apiKey,
+  environment: "sandbox",
   baseUrl: process.env.KAILOPAY_BASE_URL ?? "http://localhost:8080",
   timeoutMs: 15_000,
 });
@@ -74,11 +71,17 @@ Amounts are strings on purpose. Do not convert IDR or XLM values to JavaScript f
 
 ## Testnet and test mode
 
-The backend contract currently exposes the sandbox/testnet environment through the configured API base URL and the API key prefix. The SDK does not silently switch environments. Use an explicit base URL and `pk_test_...` key for testnet:
+The SDK requires an explicit environment. Use the `sandbox` environment and a `pk_test_...` key for testnet:
 
 ```ts
+const testApiKey = process.env.KAILOPAY_TEST_API_KEY;
+if (testApiKey === undefined) {
+  throw new Error("KAILOPAY_TEST_API_KEY is required");
+}
+
 const kailo = new KailoPay({
-  apiKey: process.env.KAILOPAY_TEST_API_KEY,
+  apiKey: testApiKey,
+  environment: "sandbox",
   baseUrl: "https://sandbox-api.kailopay.example",
 });
 ```
@@ -92,7 +95,7 @@ npm install
 npm test
 ```
 
-`npm test` builds the package and runs its request-contract tests with Node's built-in test runner.
+`npm test` builds the package and runs its request-contract tests with Node's built-in test runner. The repository also supports `pnpm test`.
 
 ## Compatibility promise
 

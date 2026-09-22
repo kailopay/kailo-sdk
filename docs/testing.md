@@ -20,6 +20,7 @@ const requests: string[] = [];
 
 const kailo = new KailoPay({
   apiKey: "pk_test_example",
+  environment: "sandbox",
   fetch: async (input) => {
     requests.push(String(input));
     return new Response(JSON.stringify({
@@ -48,4 +49,3 @@ pnpm test
 ```
 
 The SDK tests do not require a running backend. The local integration requires a configured backend database and testnet dependencies.
-

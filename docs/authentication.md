@@ -9,6 +9,7 @@ Pass the key to the client constructor:
 ```ts
 const kailo = new KailoPay({
   apiKey: process.env.KAILOPAY_API_KEY,
+  environment: "sandbox",
 });
 ```
 
@@ -18,7 +19,7 @@ The SDK sends this header on every request:
 Authorization: Bearer pk_test_...
 ```
 
-The SDK does not create, revoke, or list API keys. Those operations use the authenticated developer control plane and remain outside the server-to-server order client in version `0.1.0`.
+The SDK does not create, revoke, or list API keys. Those operations use the authenticated developer control plane and remain outside the server-to-server order client in version `0.2.0`.
 
 ## Keep the key on the server
 
@@ -33,9 +34,9 @@ The SDK does not change environments based on a hidden default. Set both the API
 ```ts
 const kailo = new KailoPay({
   apiKey: process.env.KAILOPAY_TEST_API_KEY,
+  environment: "sandbox",
   baseUrl: "https://sandbox-api.example.com",
 });
 ```
 
 The current backend contract supports the sandbox environment on the Stellar testnet. The sandbox does not move real fiat value.
-

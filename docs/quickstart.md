@@ -26,6 +26,7 @@ if (apiKey === undefined) {
 
 const kailo = new KailoPay({
   apiKey,
+  environment: "sandbox",
   baseUrl: process.env.KAILOPAY_BASE_URL ?? "http://localhost:8080",
 });
 ```
@@ -104,3 +105,4 @@ console.log(response.order.stellar_destination);
 
 The sandbox payout is simulated. The order response identifies the payout as simulated and does not represent a real IDR transfer.
 
+For wallet-owned SEP-24 flows, follow the [SEP-24 guide](sep24.md). SEP-24 methods use a short-lived SEP-10 token and return an interactive URL.

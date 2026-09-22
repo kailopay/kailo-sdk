@@ -1,6 +1,6 @@
 # Receive webhook events
 
-The KailoPay backend can deliver signed order events to a registered HTTPS endpoint. SDK version `0.1.0` does not yet export a webhook verification helper, so verify the signature in your application before processing an event.
+The KailoPay backend can deliver signed order events to a registered HTTPS endpoint. SDK version `0.2.0` exports `verifyKailoWebhook()` for signature verification.
 
 ## Preserve the raw request body
 
@@ -24,31 +24,27 @@ KailoPay-Event-Type: order.completed
 KailoPay-Api-Version: 2026-08-01
 ```
 
-Example with Node.js:
+Verify the event with the SDK:
 
 ```ts
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { verifyKailoWebhook } from "@kailopay/sdk";
 
-export function verifyKailoWebhook(
-  rawBody: string,
-  timestamp: string,
-  signatureHeader: string,
-  secret: string,
-): boolean {
-  const expected = `v1=${createHmac("sha256", secret)
-    .update(`${timestamp}.${rawBody}`, "utf8")
-    .digest("hex")}`;
-  const received = Buffer.from(signatureHeader, "utf8");
-  const calculated = Buffer.from(expected, "utf8");
+const valid = verifyKailoWebhook({
+  rawBody,
+  timestamp: request.headers.get("KailoPay-Timestamp") ?? "",
+  signature: request.headers.get("KailoPay-Signature") ?? "",
+  secret: process.env.KAILOPAY_WEBHOOK_SECRET ?? "",
+});
 
-  return received.length === calculated.length && timingSafeEqual(received, calculated);
+if (!valid) {
+  throw new Error("invalid KailoPay webhook signature");
 }
 ```
 
-Reject stale timestamps before accepting an event. Record the event ID and make event handling idempotent because delivery is at least once.
+The helper rejects stale timestamps by default after 300 seconds. Record the event ID and make event handling idempotent because delivery is at least once.
 
 ## Current SDK boundary
 
 The backend control plane owns webhook registration, delivery history, test events, and replay. Those routes use a developer session rather than an API key. The first SDK release does not wrap those routes.
 
-The SDK roadmap includes a typed webhook verification helper after the event envelope and secret lifecycle are finalized for public release.
+The SDK does not wrap webhook registration, delivery history, test events, or replay. Those routes use a developer session rather than an API key.
