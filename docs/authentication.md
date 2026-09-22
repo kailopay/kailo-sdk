@@ -13,11 +13,14 @@ const kailo = new KailoPay({
 });
 ```
 
-The SDK sends this header on every request:
+API-key-authenticated transaction requests send this header:
 
 ```http
 Authorization: Bearer pk_test_...
 ```
+
+SEP-24 wallet-owned methods use a short-lived SEP-10 bearer token. Interactive
+methods use the `kailopay_session` cookie returned by the retail hand-off.
 
 The SDK does not create, revoke, or list API keys. Those operations use the authenticated developer control plane and remain outside the server-to-server order client in version `0.2.0`.
 

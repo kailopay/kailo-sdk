@@ -295,6 +295,14 @@ export class KailoPay {
     },
     decode: (value: unknown) => T,
   ): Promise<T> {
+    const auth = options.auth ?? API_KEY_AUTH;
+    if (auth.kind === "bearer" && auth.token.trim().length === 0) {
+      throw new Error("bearer token is required");
+    }
+    if (auth.kind === "session-cookie" && auth.value.trim().length === 0) {
+      throw new Error("session cookie is required");
+    }
+
     const controller = new AbortController();
     let timedOut = false;
     const timeout = setTimeout(() => {
@@ -305,14 +313,11 @@ export class KailoPay {
     const headers = new Headers({
       Accept: "application/json",
     });
-    const auth = options.auth ?? API_KEY_AUTH;
     if (auth.kind === "api-key") headers.set("Authorization", `Bearer ${this.apiKey}`);
     if (auth.kind === "bearer") {
-      if (auth.token.trim().length === 0) throw new Error("bearer token is required");
       headers.set("Authorization", `Bearer ${auth.token}`);
     }
     if (auth.kind === "session-cookie") {
-      if (auth.value.trim().length === 0) throw new Error("session cookie is required");
       headers.set("Cookie", auth.value);
     }
     if (options.jsonBody !== undefined) headers.set("Content-Type", "application/json");

@@ -2,6 +2,13 @@
 
 The SEP-24 client uses a short-lived SEP-10 bearer token for wallet-owned operations. It returns an interactive URL for the wallet or application to open.
 
+For the examples below, load the token from a server-side secret:
+
+```ts
+const sep10Token = process.env.KAILOPAY_SEP10_TOKEN;
+if (!sep10Token) throw new Error("KAILOPAY_SEP10_TOKEN is required");
+```
+
 ## Read supported assets
 
 ```ts
@@ -23,7 +30,7 @@ const start = await kailo.sep24.deposit.start(
     payment_method: "qris",
   },
   {
-    sep10Token: process.env.KAILOPAY_SEP10_TOKEN,
+    sep10Token,
     idempotencyKey: "sep24-deposit-001",
   },
 );
@@ -43,7 +50,7 @@ const start = await kailo.sep24.withdraw.start(
     destination_token: "test-destination-001",
   },
   {
-    sep10Token: process.env.KAILOPAY_SEP10_TOKEN,
+    sep10Token,
     idempotencyKey: "sep24-withdraw-001",
   },
 );
@@ -55,13 +62,13 @@ The sandbox destination is a synthetic token. It is not a bank account and does 
 
 ```ts
 const page = await kailo.sep24.transactions.list({
-  sep10Token: process.env.KAILOPAY_SEP10_TOKEN,
+  sep10Token,
   limit: 20,
   kind: "deposit",
 });
 
 const transaction = await kailo.sep24.transactions.get({
-  sep10Token: process.env.KAILOPAY_SEP10_TOKEN,
+  sep10Token,
   id: page.transactions[0].id,
 });
 ```
@@ -84,4 +91,3 @@ const completed = await kailo.sep24.interactive.complete(start.id, {
 ```
 
 Do not put the session cookie or SEP-10 token in a browser bundle. Use the returned interactive URL for the user-facing hand-off.
-

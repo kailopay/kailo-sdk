@@ -116,6 +116,33 @@ test("rejects ambiguous SEP-24 transaction lookup before making a request", asyn
   assert.equal(calls, 0);
 });
 
+test("does not leave a timeout active when SEP-10 authentication is empty", async () => {
+  const client = makeClient(async () => new Response(JSON.stringify({ transactions: [] }), { status: 200 }));
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+  let activeTimeouts = 0;
+
+  globalThis.setTimeout = (...args) => {
+    activeTimeouts += 1;
+    return originalSetTimeout(...args);
+  };
+  globalThis.clearTimeout = (handle) => {
+    activeTimeouts -= 1;
+    return originalClearTimeout(handle);
+  };
+
+  try {
+    await assert.rejects(
+      client.sep24.transactions.list({ sep10Token: "" }),
+      /bearer token is required/,
+    );
+    assert.equal(activeTimeouts, 0);
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+    globalThis.clearTimeout = originalClearTimeout;
+  }
+});
+
 test("uses the retail session cookie for SEP-24 interactive completion", async () => {
   let request;
   const client = makeClient(async (input, init) => {
