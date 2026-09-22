@@ -21,14 +21,18 @@ Developer dashboard, analytics, revenue, wallet-profile, and webhook-administrat
 
 ## Documentation
 
-Start with the [SDK quickstart](docs/quickstart.md). Use the [API reference](docs/api-reference.md) to look up client options, methods, types, and errors.
+Start with the [SDK quickstart](https://github.com/kailopay/kailo-sdk/blob/main/docs/quickstart.md). Use the [API reference](https://github.com/kailopay/kailo-sdk/blob/main/docs/api-reference.md) to look up client options, methods, types, and errors.
 
-- [Documentation map](docs/README.md)
-- [Authenticate securely](docs/authentication.md)
-- [Create and track orders](docs/orders.md)
-- [Receive webhook events](docs/webhooks.md)
-- [Run tests and local integrations](docs/testing.md)
-- [Changelog](CHANGELOG.md)
+- [Documentation map](https://github.com/kailopay/kailo-sdk/blob/main/docs/README.md)
+- [Authenticate securely](https://github.com/kailopay/kailo-sdk/blob/main/docs/authentication.md)
+- [Create and track orders](https://github.com/kailopay/kailo-sdk/blob/main/docs/orders.md)
+- [Use SEP-24](https://github.com/kailopay/kailo-sdk/blob/main/docs/sep24.md)
+- [Receive webhook events](https://github.com/kailopay/kailo-sdk/blob/main/docs/webhooks.md)
+- [Run tests and local integrations](https://github.com/kailopay/kailo-sdk/blob/main/docs/testing.md)
+- [Publish the SDK](https://github.com/kailopay/kailo-sdk/blob/main/docs/publishing.md)
+- [Changelog](https://github.com/kailopay/kailo-sdk/blob/main/CHANGELOG.md)
+- [Contributing](https://github.com/kailopay/kailo-sdk/blob/main/CONTRIBUTING.md)
+- [Security policy](https://github.com/kailopay/kailo-sdk/blob/main/SECURITY.md)
 
 ## Install
 

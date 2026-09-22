@@ -13,6 +13,7 @@ Follow the [SDK quickstart](quickstart.md) to install the package, create a clie
 - [Use SEP-24](sep24.md) explains wallet authentication and interactive deposit or withdrawal hand-off.
 - [Receive webhook events](webhooks.md) explains the current webhook contract and signature verification helper.
 - [Run tests and local integrations](testing.md) explains package tests and custom `fetch` adapters.
+- [Publish the SDK](publishing.md) explains the one-time npm setup and tag-based trusted publishing workflow.
 
 ## Look up a symbol
 

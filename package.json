@@ -4,6 +4,23 @@
   "description": "Official TypeScript SDK for the KailoPay sandbox and Stellar testnet API.",
   "license": "MIT",
   "author": "KailoPay contributors",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kailopay/kailo-sdk.git"
+  },
+  "homepage": "https://github.com/kailopay/kailo-sdk#readme",
+  "bugs": {
+    "url": "https://github.com/kailopay/kailo-sdk/issues"
+  },
+  "keywords": [
+    "stellar",
+    "sep-24",
+    "on-ramp",
+    "off-ramp",
+    "payment",
+    "typescript"
+  ],
+  "packageManager": "pnpm@11.19.0",
   "type": "module",
   "engines": {
     "node": ">=20"
@@ -25,7 +42,12 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "tsc -p tsconfig.json && node --test test/**/*.test.mjs",
+    "release:verify": "node scripts/verify-release.mjs",
     "prepublishOnly": "tsc -p tsconfig.json && node --test test/**/*.test.mjs"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
