@@ -4,6 +4,23 @@ import {
   decodeOrderResponse,
   decodeQuotePreviewResponse,
 } from "./decoders.js";
+import {
+  decodeSEP24Info,
+  decodeSEP24Interactive,
+  decodeSEP24Start,
+  decodeSEP24Transaction,
+  decodeSEP24TransactionList,
+} from "./sep24-decoders.js";
+import type {
+  SEP24Client,
+  SEP24DepositRequest,
+  SEP24InteractiveCompleteOptions,
+  SEP24InteractiveOptions,
+  SEP24StartOptions,
+  SEP24TransactionListOptions,
+  SEP24TransactionLookup,
+  SEP24WithdrawRequest,
+} from "./sep24-types.js";
 import type {
   CreateOfframpRequest,
   CreateOnrampRequest,
@@ -35,6 +52,7 @@ type RequestAuth =
 
 const DEFAULT_BASE_URL = "http://localhost:8080";
 const DEFAULT_TIMEOUT_MS = 15_000;
+const API_KEY_AUTH: RequestAuth = { kind: "api-key" };
 
 function trimBaseUrl(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, "");
@@ -49,6 +67,25 @@ function messageFromPayload(payload: Record<string, unknown>, status: number): s
   return typeof candidate === "string" && candidate.length > 0
     ? candidate
     : `kailopay request failed with status ${status}`;
+}
+
+function formDataFromFields(fields: Record<string, string | undefined>): FormData {
+  const form = new FormData();
+  for (const [key, value] of Object.entries(fields)) {
+    if (value !== undefined) form.set(key, value);
+  }
+  return form;
+}
+
+function transactionLookup(options: SEP24TransactionLookup): readonly [string, string] {
+  const identifiers: Array<readonly [string, string]> = [];
+  if (options.id !== undefined) identifiers.push(["id", options.id]);
+  if (options.stellar_transaction_id !== undefined) identifiers.push(["stellar_transaction_id", options.stellar_transaction_id]);
+  if (options.external_transaction_id !== undefined) identifiers.push(["external_transaction_id", options.external_transaction_id]);
+  if (identifiers.length !== 1) throw new Error("exactly one transaction lookup identifier is required");
+  const identifier = identifiers[0];
+  if (identifier === undefined) throw new Error("exactly one transaction lookup identifier is required");
+  return identifier;
 }
 
 export class KailoPay {
@@ -79,6 +116,8 @@ export class KailoPay {
       options?: ListOrdersOptions & Pick<RequestOptions, "signal">,
     ) => Promise<ListOrdersResponse>;
   };
+
+  readonly sep24: SEP24Client;
 
   private readonly apiKey: string;
   private readonly baseUrl: string;
@@ -115,7 +154,7 @@ export class KailoPay {
       create: (request, requestOptions) =>
         this.request<OrderResponse>("/v1/onramps", {
           method: "POST",
-          body: request,
+          jsonBody: request,
           ...requestOptions,
         }, decodeOrderResponse),
     };
@@ -123,7 +162,7 @@ export class KailoPay {
       create: (request, requestOptions) =>
         this.request<OrderResponse>("/v1/offramps", {
           method: "POST",
-          body: request,
+          jsonBody: request,
           ...requestOptions,
         }, decodeOrderResponse),
     };
@@ -131,7 +170,7 @@ export class KailoPay {
       preview: (request, requestOptions) =>
         this.request<QuotePreviewResponse>("/v1/quotes", {
           method: "POST",
-          body: request,
+          jsonBody: request,
           ...requestOptions,
         }, decodeQuotePreviewResponse),
     };
@@ -154,13 +193,102 @@ export class KailoPay {
         }, decodeListOrdersResponse);
       },
     };
+
+    this.sep24 = {
+      info: (requestOptions) =>
+        this.request("/sep24/info", {
+          method: "GET",
+          auth: { kind: "none" },
+          ...(requestOptions?.signal === undefined ? {} : { signal: requestOptions.signal }),
+        }, decodeSEP24Info),
+      deposit: {
+        start: (request: SEP24DepositRequest, requestOptions: SEP24StartOptions) =>
+          this.request("/sep24/transactions/deposit/interactive", {
+            method: "POST",
+            body: formDataFromFields({
+              asset_code: request.asset_code,
+              amount_minor: request.amount_minor,
+              account: request.account,
+              memo: request.memo,
+              memo_type: request.memo_type,
+              payment_method: request.payment_method,
+              quote_id: request.quote_id,
+            }),
+            auth: { kind: "bearer", token: requestOptions.sep10Token },
+            idempotencyKey: requestOptions.idempotencyKey,
+            ...(requestOptions.signal === undefined ? {} : { signal: requestOptions.signal }),
+          }, decodeSEP24Start),
+      },
+      withdraw: {
+        start: (request: SEP24WithdrawRequest, requestOptions: SEP24StartOptions) =>
+          this.request("/sep24/transactions/withdraw/interactive", {
+            method: "POST",
+            body: formDataFromFields({
+              asset_code: request.asset_code,
+              amount: request.amount,
+              destination_token: request.destination_token,
+              quote_id: request.quote_id,
+            }),
+            auth: { kind: "bearer", token: requestOptions.sep10Token },
+            idempotencyKey: requestOptions.idempotencyKey,
+            ...(requestOptions.signal === undefined ? {} : { signal: requestOptions.signal }),
+          }, decodeSEP24Start),
+      },
+      transactions: {
+        list: (requestOptions: SEP24TransactionListOptions) => {
+          const query = new URLSearchParams();
+          if (requestOptions.limit !== undefined) query.set("limit", String(requestOptions.limit));
+          if (requestOptions.asset_code !== undefined) query.set("asset_code", requestOptions.asset_code);
+          if (requestOptions.kind !== undefined) query.set("kind", requestOptions.kind);
+          if (requestOptions.no_older_than !== undefined) query.set("no_older_than", requestOptions.no_older_than);
+          if (requestOptions.paging_id !== undefined) query.set("paging_id", requestOptions.paging_id);
+          if (requestOptions.lang !== undefined) query.set("lang", requestOptions.lang);
+          const suffix = query.size > 0 ? `?${query.toString()}` : "";
+          return this.request(`/sep24/transactions${suffix}`, {
+            method: "GET",
+            auth: { kind: "bearer", token: requestOptions.sep10Token },
+            ...(requestOptions.signal === undefined ? {} : { signal: requestOptions.signal }),
+          }, decodeSEP24TransactionList);
+        },
+        get: async (requestOptions: SEP24TransactionLookup) => {
+          const [key, value] = transactionLookup(requestOptions);
+          const query = new URLSearchParams([[key, value]]);
+          return this.request(`/sep24/transaction?${query.toString()}`, {
+            method: "GET",
+            auth: { kind: "bearer", token: requestOptions.sep10Token },
+            ...(requestOptions.signal === undefined ? {} : { signal: requestOptions.signal }),
+          }, decodeSEP24Transaction);
+        },
+      },
+      interactive: {
+        get: (id: string, requestOptions: SEP24InteractiveOptions) =>
+          this.request(`/sep24/interactive/${encodeURIComponent(id)}`, {
+            method: "GET",
+            auth: { kind: "session-cookie", value: requestOptions.sessionCookie },
+            ...(requestOptions.signal === undefined ? {} : { signal: requestOptions.signal }),
+          }, decodeSEP24Interactive),
+        complete: (id: string, requestOptions: SEP24InteractiveCompleteOptions) => {
+          const body = new URLSearchParams();
+          if (requestOptions.destination_token !== undefined) body.set("destination_token", requestOptions.destination_token);
+          return this.request(`/sep24/interactive/${encodeURIComponent(id)}`, {
+            method: "POST",
+            body: body.toString(),
+            contentType: "application/x-www-form-urlencoded",
+            auth: { kind: "session-cookie", value: requestOptions.sessionCookie },
+            ...(requestOptions.signal === undefined ? {} : { signal: requestOptions.signal }),
+          }, decodeSEP24Transaction);
+        },
+      },
+    };
   }
 
   private async request<T>(
     path: string,
     options: {
       readonly method: "GET" | "POST";
-      readonly body?: unknown;
+      readonly body?: BodyInit;
+      readonly jsonBody?: unknown;
+      readonly contentType?: string;
       readonly idempotencyKey?: string;
       readonly signal?: AbortSignal;
       readonly auth?: RequestAuth;
@@ -177,7 +305,7 @@ export class KailoPay {
     const headers = new Headers({
       Accept: "application/json",
     });
-    const auth = options.auth ?? { kind: "api-key" as const };
+    const auth = options.auth ?? API_KEY_AUTH;
     if (auth.kind === "api-key") headers.set("Authorization", `Bearer ${this.apiKey}`);
     if (auth.kind === "bearer") {
       if (auth.token.trim().length === 0) throw new Error("bearer token is required");
@@ -187,7 +315,8 @@ export class KailoPay {
       if (auth.value.trim().length === 0) throw new Error("session cookie is required");
       headers.set("Cookie", auth.value);
     }
-    if (options.body !== undefined) headers.set("Content-Type", "application/json");
+    if (options.jsonBody !== undefined) headers.set("Content-Type", "application/json");
+    if (options.contentType !== undefined) headers.set("Content-Type", options.contentType);
     if (options.idempotencyKey !== undefined) headers.set("Idempotency-Key", options.idempotencyKey);
 
     try {
@@ -196,7 +325,8 @@ export class KailoPay {
         headers,
         signal,
       };
-      if (options.body !== undefined) requestInit.body = JSON.stringify(options.body);
+      if (options.jsonBody !== undefined) requestInit.body = JSON.stringify(options.jsonBody);
+      if (options.body !== undefined) requestInit.body = options.body;
       const response = await this.transport(`${this.baseUrl}${path}`, requestInit);
       const payload = await this.readPayload(response);
       if (!response.ok) {
