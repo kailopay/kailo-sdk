@@ -17,6 +17,28 @@ The repository is the Week 1 SDK foundation. It currently provides typed helpers
 
 Developer dashboard, analytics, revenue, wallet-profile, and webhook-administration routes remain session-authenticated control-plane APIs. They will be added as a separate surface only when their public SDK contract is finalized.
 
+## Documentation
+
+Start with the [SDK quickstart](docs/quickstart.md). Use the [API reference](docs/api-reference.md) to look up client options, methods, types, and errors.
+
+- [Documentation map](docs/README.md)
+- [Authenticate securely](docs/authentication.md)
+- [Create and track orders](docs/orders.md)
+- [Receive webhook events](docs/webhooks.md)
+- [Run tests and local integrations](docs/testing.md)
+- [Changelog](CHANGELOG.md)
+
+## Documentation
+
+Start with the [SDK quickstart](docs/quickstart.md). Use the [API reference](docs/api-reference.md) to look up client options, methods, types, and errors.
+
+- [Documentation map](docs/README.md)
+- [Authenticate securely](docs/authentication.md)
+- [Create and track orders](docs/orders.md)
+- [Receive webhook events](docs/webhooks.md)
+- [Run tests and local integrations](docs/testing.md)
+- [Changelog](CHANGELOG.md)
+
 ## Install
 
 ```bash
