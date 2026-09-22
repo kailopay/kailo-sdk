@@ -23,10 +23,25 @@ const orderResponse = {
   },
 };
 
+test("requires an explicit sandbox environment", () => {
+  assert.throws(
+    () => new KailoPay({ apiKey: "pk_test_example" }),
+    /environment is required/,
+  );
+});
+
+test("rejects a non-sandbox API key", () => {
+  assert.throws(
+    () => new KailoPay({ apiKey: "sk_live_example", environment: "sandbox" }),
+    /pk_test_/,
+  );
+});
+
 test("creates an on-ramp with bearer and idempotency headers", async () => {
   let received;
   const client = new KailoPay({
     apiKey: "pk_test_example",
+    environment: "sandbox",
     baseUrl: "https://api.example.test/",
     fetch: async (input, init) => {
       received = { input, init };
@@ -55,6 +70,7 @@ test("encodes order ids and query parameters", async () => {
   const requests = [];
   const client = new KailoPay({
     apiKey: "pk_test_example",
+    environment: "sandbox",
     baseUrl: "https://api.example.test",
     fetch: async (input) => {
       const url = String(input);
@@ -74,6 +90,7 @@ test("encodes order ids and query parameters", async () => {
 test("maps API errors without exposing the API key", async () => {
   const client = new KailoPay({
     apiKey: "pk_test_secret",
+    environment: "sandbox",
     fetch: async () =>
       new Response(JSON.stringify({ code: "AMOUNT_OUT_OF_RANGE", message: "amount is invalid" }), {
         status: 422,

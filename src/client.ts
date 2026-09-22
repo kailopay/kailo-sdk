@@ -16,6 +16,7 @@ import type {
 
 export interface KailoPayOptions {
   readonly apiKey: string;
+  readonly environment: "sandbox";
   readonly baseUrl?: string;
   readonly fetch?: typeof globalThis.fetch;
   readonly timeoutMs?: number;
@@ -25,6 +26,12 @@ export interface RequestOptions {
   readonly idempotencyKey?: string;
   readonly signal?: AbortSignal;
 }
+
+type RequestAuth =
+  | { readonly kind: "api-key" }
+  | { readonly kind: "bearer"; readonly token: string }
+  | { readonly kind: "session-cookie"; readonly value: string }
+  | { readonly kind: "none" };
 
 const DEFAULT_BASE_URL = "http://localhost:8080";
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -79,8 +86,17 @@ export class KailoPay {
   private readonly timeoutMs: number;
 
   constructor(options: KailoPayOptions) {
+    if (options.environment === undefined) {
+      throw new Error("environment is required");
+    }
+    if (options.environment !== "sandbox") {
+      throw new Error(`unsupported environment: ${options.environment}`);
+    }
     if (options.apiKey.trim().length === 0) {
       throw new Error("apiKey is required");
+    }
+    if (!options.apiKey.startsWith("pk_test_")) {
+      throw new Error("sandbox API key must start with pk_test_");
     }
     if (options.timeoutMs !== undefined && (!Number.isInteger(options.timeoutMs) || options.timeoutMs <= 0)) {
       throw new Error("timeoutMs must be a positive integer");
@@ -147,6 +163,7 @@ export class KailoPay {
       readonly body?: unknown;
       readonly idempotencyKey?: string;
       readonly signal?: AbortSignal;
+      readonly auth?: RequestAuth;
     },
     decode: (value: unknown) => T,
   ): Promise<T> {
@@ -159,8 +176,17 @@ export class KailoPay {
     const signal = options.signal === undefined ? controller.signal : this.combineSignals(options.signal, controller.signal);
     const headers = new Headers({
       Accept: "application/json",
-      Authorization: `Bearer ${this.apiKey}`,
     });
+    const auth = options.auth ?? { kind: "api-key" as const };
+    if (auth.kind === "api-key") headers.set("Authorization", `Bearer ${this.apiKey}`);
+    if (auth.kind === "bearer") {
+      if (auth.token.trim().length === 0) throw new Error("bearer token is required");
+      headers.set("Authorization", `Bearer ${auth.token}`);
+    }
+    if (auth.kind === "session-cookie") {
+      if (auth.value.trim().length === 0) throw new Error("session cookie is required");
+      headers.set("Cookie", auth.value);
+    }
     if (options.body !== undefined) headers.set("Content-Type", "application/json");
     if (options.idempotencyKey !== undefined) headers.set("Idempotency-Key", options.idempotencyKey);
 
