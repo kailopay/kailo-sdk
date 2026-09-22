@@ -1,6 +1,8 @@
 export { KailoPay } from "./client.js";
 export type { KailoPayOptions, RequestOptions } from "./client.js";
 export { KailoPayError, KailoPayTimeoutError } from "./errors.js";
+export { verifyKailoWebhook } from "./webhooks.js";
+export type { VerifyKailoWebhookOptions } from "./webhooks.js";
 export { exactAmount, minorAmount } from "./types.js";
 export type {
   SEP24AssetInfo,
