@@ -1,0 +1,3012 @@
+openapi: 3.0.3
+info:
+  title: KailoPay Backend API
+  version: 0.1.0
+  description: |
+    Sandbox/testnet payment and Stellar anchor API. Users complete Persona
+    identity verification before they can create an API key or an on-ramp,
+    off-ramp, or SEP-24 transaction. The current release does not move real
+    fiat value.
+servers:
+  - url: http://localhost:8080
+    description: Local development
+tags:
+  - name: Identity and KYC
+    description: Local sessions and Persona identity-verification status.
+  - name: Developer
+    description: Sandbox API-key management.
+  - name: Developer webhooks
+    description: Register and disable sandbox order-event destinations.
+  - name: SEP-10
+    description: Classic Stellar wallet authentication for the sandbox anchor.
+  - name: Orders
+    description: Authenticated on-ramp, off-ramp, and order operations.
+  - name: SEP-24
+    description: Authenticated sandbox deposit and withdrawal operations.
+  - name: SEP-38
+    description: Public indicative and amount-specific sandbox quote operations.
+  - name: Anchor discovery
+    description: Public Stellar testnet anchor metadata and federation lookup.
+  - name: Provider callbacks
+    description: Signed callbacks from Persona and Xendit.
+paths:
+  /auth:
+    get:
+      tags: [SEP-10]
+      operationId: getSEP10Challenge
+      summary: Create a SEP-10 challenge transaction
+      description: Returns a short-lived challenge transaction for a classic Stellar testnet account. The wallet must sign this transaction before exchanging it for a bearer token.
+      parameters:
+        - name: account
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 2
+          description: Classic Stellar G-account to authenticate.
+      responses:
+        '200':
+          description: Unsigned SEP-10 challenge transaction
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP10ChallengeResponse'
+        '400':
+          description: Invalid account or challenge request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP10Error'
+    post:
+      tags: [SEP-10]
+      operationId: exchangeSEP10Challenge
+      summary: Exchange a signed SEP-10 challenge
+      description: Verifies the wallet signature and returns a short-lived bearer JWT bound to the classic Stellar account.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SEP10ExchangeRequest'
+      responses:
+        '200':
+          description: SEP-10 bearer token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP10TokenResponse'
+        '400':
+          description: Invalid, expired, or already-used challenge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP10Error'
+  /auth/register:
+    post:
+      summary: Create an email account
+      description: |
+        Creates an unverified credentials account and issues a single-use
+        verification token. When Gmail is enabled, the configured sender sends
+        a KailoPay-branded email with an inline logo and HTML and plain-text
+        versions. The default console sender logs the link instead.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: Account created; verification required before login
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '400':
+          description: Invalid JSON, email, or password (10-128 characters required)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Email already registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /auth/login:
+    post:
+      summary: Sign in with email and password
+      description: Verifies credentials and sets the opaque session cookie. Unknown emails and wrong passwords both return 401 without distinguishing the cause.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Authenticated user with session cookie
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+              description: HttpOnly, SameSite=Lax local session cookie.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '401':
+          description: Invalid email or password, or account locked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Email is not verified yet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /auth/google/login:
+    get:
+      summary: Start Google sign-in
+      description: Redirects the browser to Google's OIDC authorization endpoint with PKCE. Returns 503 when Google credentials are not configured.
+      responses:
+        '302':
+          description: Redirect to Google
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
+        '503':
+          description: Google sign-in is not configured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /auth/google/callback:
+    get:
+      summary: Complete Google sign-in
+      description: Exchanges the Google authorization code and redirects to the frontend with a local session cookie. A Google identity whose verified email matches an existing account is linked to that account.
+      responses:
+        '302':
+          description: Redirect to the configured frontend success URL
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
+            Set-Cookie:
+              schema:
+                type: string
+                description: HttpOnly, SameSite=Lax local session cookie.
+        '400':
+          description: Invalid, expired, or replayed authentication callback
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /auth/logout:
+    post:
+      summary: End the local session
+      description: Revokes the KailoPay session represented by the browser cookie and clears that cookie.
+      responses:
+        '204':
+          description: Session ended or was already absent
+        '500':
+          description: Session revocation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /auth/email/verify:
+    post:
+      summary: Verify an email address
+      description: Consumes the single-use verification token from the register or resend flow. Verification tokens remain valid for 24 hours and can be used only once.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailTokenRequest'
+      responses:
+        '200':
+          description: Verified profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '400':
+          description: Invalid, expired, or already used token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /auth/email/resend:
+    post:
+      summary: Resend the verification email
+      description: |
+        For an existing unverified account, reissues a single-use verification
+        token and sends the KailoPay-branded verification email when Gmail is
+        enabled. The default console sender logs the link instead. Always
+        returns 202 regardless of whether the account exists or is already
+        verified.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ForgotPasswordRequest'
+      responses:
+        '202':
+          description: The request was accepted without disclosing account existence
+        '400':
+          description: Invalid JSON or email syntax
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /auth/password/forgot:
+    post:
+      summary: Request a password-reset email
+      description: |
+        For an existing account, issues a single-use reset token valid for one
+        hour and sends the KailoPay-branded password-reset email when Gmail is
+        enabled. The default console sender logs the link instead. A valid
+        request always returns 202 regardless of whether the account exists.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ForgotPasswordRequest'
+      responses:
+        '202':
+          description: The request was accepted without disclosing account existence
+        '400':
+          description: Invalid JSON or email syntax
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /auth/password/reset:
+    post:
+      summary: Reset the password with a token
+      description: Consumes the single-use reset token, which remains valid for one hour, stores a new Argon2id hash, and revokes every session for the account.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordResetRequest'
+      responses:
+        '204':
+          description: Password updated; all sessions revoked
+        '400':
+          description: Invalid token or password policy violation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /auth/password/change:
+    post:
+      summary: Change the password of the signed-in account
+      description: Requires the current password, stores the new hash, and revokes every session including the current one.
+      security:
+        - kailoSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordChangeRequest'
+      responses:
+        '204':
+          description: Password changed; sign in again
+        '401':
+          description: Missing session or wrong current password
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '400':
+          description: Invalid JSON or password policy violation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /auth/me:
+    get:
+      summary: Get the authenticated local user
+      security:
+        - kailoSession: []
+      responses:
+        '200':
+          description: Authenticated user profile
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user]
+                properties:
+                  user:
+                    $ref: '#/components/schemas/UserProfile'
+        '401':
+          description: Missing, expired, revoked, or invalid local session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    patch:
+      summary: Update the authenticated local profile
+      description: Updates the local display name and Developer Mode opt-in. Email and verification status are managed by the authentication flows.
+      security:
+        - kailoSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProfileRequest'
+      responses:
+        '200':
+          description: Updated profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfileResponse'
+        '400':
+          description: Invalid display name
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Missing or invalid local session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /auth/me/avatar:
+    get:
+      summary: Read the authenticated user's private avatar
+      security:
+        - kailoSession: []
+      responses:
+        '200':
+          description: Avatar bytes streamed from private object storage
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+        '401':
+          description: Missing or invalid local session
+        '404':
+          description: The user has no avatar
+    put:
+      summary: Replace the authenticated user's avatar
+      description: Accepts one JPEG, PNG, or WebP image up to the configured size limit and stores it in the private MinIO bucket.
+      security:
+        - kailoSession: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [avatar]
+              properties:
+                avatar:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Updated profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfileResponse'
+        '400':
+          description: Invalid image or multipart request
+        '401':
+          description: Missing or invalid local session
+        '413':
+          description: Avatar exceeds the configured size limit
+    delete:
+      summary: Delete the authenticated user's avatar
+      security:
+        - kailoSession: []
+      responses:
+        '200':
+          description: Updated profile without an avatar
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfileResponse'
+        '401':
+          description: Missing or invalid local session
+  /v1/kyc:
+    get:
+      tags: [Identity and KYC]
+      operationId: getKYCStatus
+      summary: Get the authenticated user's identity-verification status
+      description: Returns the latest webhook-backed Persona status. Only approved is eligible to create API keys or on/off-ramp orders.
+      security:
+        - kailoSession: []
+      responses:
+        '200':
+          description: Current KYC status without identity fields or provider secrets
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KYCStatusResponse'
+        '401':
+          description: Missing or invalid local session
+        '500':
+          description: Failed to read KYC status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KYCError'
+  /v1/kyc/inquiry:
+    post:
+      tags: [Identity and KYC]
+      operationId: createKYCInquiry
+      summary: Create or resume the authenticated user's Persona inquiry
+      description: Creates a backend-owned Persona inquiry or resumes the current inquiry. The optional session token is short-lived and intended only for the embedded browser flow.
+      security:
+        - kailoSession: []
+      responses:
+        '201':
+          description: Persona inquiry details for the embedded flow
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KYCInquiryResponse'
+        '401':
+          description: Missing or invalid local session
+        '503':
+          description: Persona is temporarily unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KYCError'
+        '500':
+          description: Unexpected server failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KYCError'
+  /v1/api-keys:
+    post:
+      tags: [Developer]
+      operationId: createAPIKey
+      summary: Create a sandbox API key
+      description: Requires Developer Mode and an approved Persona identity verification. The full key is returned only in this response.
+      security:
+        - kailoSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAPIKeyRequest'
+      responses:
+        '201':
+          description: API key created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateAPIKeyResponse'
+        '403':
+          description: Developer Mode is disabled or approved identity verification is required (KYC_REQUIRED)
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ErrorResponse'
+                  - $ref: '#/components/schemas/KYCError'
+    get:
+      tags: [Developer]
+      operationId: listAPIKeys
+      summary: List sandbox API keys
+      security:
+        - kailoSession: []
+      responses:
+        '200':
+          description: API-key metadata without secret values
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [api_keys]
+                properties:
+                  api_keys:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/APIKeyMetadata'
+  /v1/api-keys/{id}:
+    delete:
+      tags: [Developer]
+      operationId: revokeAPIKey
+      summary: Revoke a sandbox API key
+      security:
+        - kailoSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: API key revoked
+        '404':
+          description: Key not found for this user
+  /v1/developer/overview:
+    get:
+      tags: [Developer]
+      operationId: getDeveloperOverview
+      summary: Read the authenticated developer account overview
+      description: Account-scoped sandbox usage, exchange health, revenue totals, and recent orders. Amounts are exact strings and sandbox figures are not real fiat revenue.
+      security:
+        - kailoSession: []
+      parameters:
+        - {$ref: '#/components/parameters/DeveloperClientID'}
+        - {$ref: '#/components/parameters/DeveloperFrom'}
+        - {$ref: '#/components/parameters/DeveloperTo'}
+        - {$ref: '#/components/parameters/DeveloperCurrency'}
+      responses:
+        '200':
+          description: Developer overview
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DeveloperOverviewResponse'}
+        '401': {description: Missing or invalid local session}
+        '400': {description: 'Invalid date, currency, or ownership filter'}
+  /v1/developer/analytics:
+    get:
+      tags: [Developer]
+      operationId: getDeveloperAnalytics
+      summary: Read bounded developer usage analytics
+      security:
+        - kailoSession: []
+      parameters:
+        - {$ref: '#/components/parameters/DeveloperClientID'}
+        - {$ref: '#/components/parameters/DeveloperFrom'}
+        - {$ref: '#/components/parameters/DeveloperTo'}
+        - name: bucket
+          in: query
+          schema: {type: string, enum: [hour, day, week], default: day}
+        - {$ref: '#/components/parameters/DeveloperCurrency'}
+        - {$ref: '#/components/parameters/DeveloperDirection'}
+        - {$ref: '#/components/parameters/DeveloperStatus'}
+        - {$ref: '#/components/parameters/DeveloperPaymentMethod'}
+      responses:
+        '200':
+          description: Time-bucketed developer analytics
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DeveloperAnalyticsResponse'}
+        '401': {description: Missing or invalid local session}
+        '400': {description: Invalid analytics filter or range}
+  /v1/developer/revenue/summary:
+    get:
+      tags: [Developer]
+      operationId: getDeveloperRevenueSummary
+      summary: Read sandbox fee and revenue totals
+      description: Totals come from immutable order financial snapshots. In the current zero-fee sandbox, revenue is simulated and normally zero.
+      security:
+        - kailoSession: []
+      parameters:
+        - {$ref: '#/components/parameters/DeveloperClientID'}
+        - {$ref: '#/components/parameters/DeveloperFrom'}
+        - {$ref: '#/components/parameters/DeveloperTo'}
+        - {$ref: '#/components/parameters/DeveloperCurrency'}
+      responses:
+        '200':
+          description: Sandbox revenue summary
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DeveloperRevenueSummaryResponse'}
+        '401': {description: Missing or invalid local session}
+        '400': {description: Invalid revenue filter or range}
+  /v1/developer/revenue/entries:
+    get:
+      tags: [Developer]
+      operationId: listDeveloperRevenueEntries
+      summary: List immutable sandbox revenue entries
+      security:
+        - kailoSession: []
+      parameters:
+        - {$ref: '#/components/parameters/DeveloperClientID'}
+        - {$ref: '#/components/parameters/DeveloperFrom'}
+        - {$ref: '#/components/parameters/DeveloperTo'}
+        - {$ref: '#/components/parameters/DeveloperCurrency'}
+        - {$ref: '#/components/parameters/DeveloperLimit'}
+        - {$ref: '#/components/parameters/DeveloperPagingID'}
+      responses:
+        '200':
+          description: Cursor-paginated immutable financial entries
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DeveloperRevenueEntriesResponse'}
+        '401': {description: Missing or invalid local session}
+        '400': {description: Invalid revenue filter or cursor}
+  /v1/developer/orders:
+    get:
+      tags: [Developer]
+      operationId: listDeveloperOrders
+      summary: List account-owned orders with integration correlations
+      security:
+        - kailoSession: []
+      parameters:
+        - {$ref: '#/components/parameters/DeveloperClientID'}
+        - {$ref: '#/components/parameters/DeveloperFrom'}
+        - {$ref: '#/components/parameters/DeveloperTo'}
+        - {$ref: '#/components/parameters/DeveloperCurrency'}
+        - {$ref: '#/components/parameters/DeveloperDirection'}
+        - {$ref: '#/components/parameters/DeveloperStatus'}
+        - {$ref: '#/components/parameters/DeveloperPaymentMethod'}
+        - {$ref: '#/components/parameters/DeveloperLimit'}
+        - {$ref: '#/components/parameters/DeveloperPagingID'}
+      responses:
+        '200':
+          description: Cursor-paginated account-owned orders
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DeveloperOrdersResponse'}
+        '401': {description: Missing or invalid local session}
+        '400': {description: Invalid order filter or cursor}
+  /v1/developer/wallets:
+    get:
+      tags: [Developer]
+      operationId: listDeveloperWallets
+      summary: List verified developer wallets
+      security:
+        - kailoSession: []
+      responses:
+        '200':
+          description: Verified wallet metadata without secret seeds
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DeveloperWalletListResponse'}
+        '401': {description: Missing or invalid local session}
+    post:
+      tags: [Developer]
+      operationId: registerDeveloperWallet
+      summary: Register a wallet after SEP-10 verification
+      description: The SEP-10 bearer proof must bind the submitted account and Stellar testnet. The server stores only the public account.
+      security:
+        - kailoSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RegisterDeveloperWalletRequest'}
+      responses:
+        '201':
+          description: Verified wallet registered
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DeveloperWalletResponse'}
+        '400': {description: Invalid wallet or proof/account mismatch}
+        '401': {description: Missing or invalid local session or SEP-10 proof}
+  /v1/developer/wallets/{id}:
+    patch:
+      tags: [Developer]
+      operationId: updateDeveloperWallet
+      summary: Update a verified wallet label or primary flag
+      security:
+        - kailoSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdateDeveloperWalletRequest'}
+      responses:
+        '200':
+          description: Updated wallet
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DeveloperWalletResponse'}
+        '401': {description: Missing or invalid local session}
+        '404': {description: Wallet not found for this user}
+    delete:
+      tags: [Developer]
+      operationId: revokeDeveloperWallet
+      summary: Revoke a verified developer wallet
+      security:
+        - kailoSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '204': {description: Wallet revoked}
+        '401': {description: Missing or invalid local session}
+        '404': {description: Wallet not found for this user}
+  /v1/webhook-endpoints:
+    post:
+      tags: [Developer webhooks]
+      operationId: createWebhookEndpoint
+      summary: Register a sandbox webhook endpoint
+      description: |
+        Registers an HTTPS endpoint for sandbox order-lifecycle events. The
+        endpoint must use a public host without embedded credentials. The
+        signing secret is returned only once. Delivery is at-least-once and
+        can be inspected or replayed through the delivery routes.
+      security:
+        - kailoSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWebhookEndpointRequest'
+      responses:
+        '201':
+          description: Endpoint registered; the signing secret is shown once
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateWebhookEndpointResponse'
+        '400':
+          description: Invalid JSON, URL, or event type
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Missing or invalid local session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Endpoint could not be stored
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    get:
+      tags: [Developer webhooks]
+      operationId: listWebhookEndpoints
+      summary: List the authenticated user's webhook endpoints
+      description: Returns endpoint metadata without returning signing secrets.
+      security:
+        - kailoSession: []
+      responses:
+        '200':
+          description: Webhook endpoint metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookEndpointListResponse'
+        '401':
+          description: Missing or invalid local session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Endpoint list could not be read
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /v1/webhook-endpoints/{id}:
+    get:
+      tags: [Developer webhooks]
+      operationId: getWebhookEndpoint
+      summary: Read one owned webhook endpoint
+      security:
+        - kailoSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Webhook endpoint metadata
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/WebhookEndpointResponse'}
+        '401': {description: Missing or invalid local session}
+        '404': {description: Endpoint not found for this user}
+    post:
+      tags: [Developer webhooks]
+      operationId: testWebhookEndpoint
+      summary: Queue a signed webhook test event
+      description: Queues a synthetic sandbox event for the endpoint. The test has no order or payment effect.
+      security:
+        - kailoSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '202':
+          description: Signed test delivery queued
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/WebhookQueuedResponse'}
+        '401': {description: Missing or invalid local session}
+        '404': {description: Endpoint not found for this user}
+    delete:
+      tags: [Developer webhooks]
+      operationId: disableWebhookEndpoint
+      summary: Disable a webhook endpoint
+      description: Disables the authenticated user's endpoint without deleting its delivery history.
+      security:
+        - kailoSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Endpoint disabled
+        '401':
+          description: Missing or invalid local session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Endpoint not found for this user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Endpoint could not be disabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /v1/webhook-deliveries:
+    get:
+      tags: [Developer webhooks]
+      operationId: listWebhookDeliveries
+      summary: List owned webhook delivery attempts
+      security:
+        - kailoSession: []
+      parameters:
+        - name: endpoint_id
+          in: query
+          schema: {type: string, format: uuid}
+        - name: event_id
+          in: query
+          schema: {type: string, format: uuid}
+        - name: status
+          in: query
+          schema: {type: string, enum: [in_flight, delivered, retry_scheduled, failed, exhausted, superseded]}
+        - name: from
+          in: query
+          schema: {type: string, format: date-time}
+        - name: to
+          in: query
+          schema: {type: string, format: date-time}
+        - {$ref: '#/components/parameters/DeveloperLimit'}
+        - {$ref: '#/components/parameters/DeveloperPagingID'}
+      responses:
+        '200':
+          description: Cursor-paginated safe delivery metadata
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/WebhookDeliveriesResponse'}
+        '401': {description: Missing or invalid local session}
+        '400': {description: Invalid delivery filter or cursor}
+  /v1/webhook-deliveries/{id}/replay:
+    post:
+      tags: [Developer webhooks]
+      operationId: replayWebhookDelivery
+      summary: Queue one safe replay of an exhausted delivery
+      description: Replays the same immutable event ID. It does not create a new order or business event.
+      security:
+        - kailoSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '202': {description: Replay queued}
+        '401': {description: Missing or invalid local session}
+        '404': {description: Delivery not found for this user}
+        '409': {description: Delivery is not exhausted and cannot be replayed}
+  /v1/quotes:
+    post:
+      tags: [Orders]
+      operationId: previewQuote
+      summary: Preview the current IDR/XLM exchange quote
+      description: |
+        Returns an indicative quote without creating an order, reserving
+        treasury liquidity, or creating a payment checkout. The order create
+        endpoint fetches a fresh rate and is authoritative if the market moves
+        between preview and submission. This preview endpoint is public; order
+        creation remains authenticated.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuotePreviewRequest'
+      responses:
+        '200':
+          description: Current indicative quote
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuotePreviewResponse'
+        '400':
+          description: Malformed or unsupported quote request (INVALID_REQUEST)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OnrampError'
+        '415':
+          description: Content type is not application/json
+        '422':
+          description: Amount outside the supported range (AMOUNT_OUT_OF_RANGE)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OnrampError'
+        '503':
+          description: Quote unavailable (QUOTE_UNAVAILABLE) or an external service is unavailable (EXTERNAL_SERVICE_UNAVAILABLE)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OnrampError'
+  /v1/onramps:
+    post:
+      tags: [Orders]
+      operationId: createOnramp
+      summary: Create an IDR to native-XLM sandbox on-ramp
+      description: |
+        Accepts either an API-key principal or a verified retail session
+        principal. For a session-authenticated browser mutation, `Origin`
+        must exactly match a configured frontend origin; when `Origin` is
+        absent, an equivalent `Referer` origin is accepted.
+      security:
+        - kailoAPIKey: []
+        - kailoSession: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 255
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOnrampRequest'
+      responses:
+        '200':
+          description: Idempotent replay of a previously completed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '201':
+          description: Treasury inventory reserved and Xendit hosted checkout created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '202':
+          description: Checkout outcome is pending provider reconciliation (CHECKOUT_PENDING_RECONCILIATION)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OnrampError'
+        '400':
+          description: Malformed request (INVALID_REQUEST) or invalid Stellar destination (INVALID_STELLAR_ACCOUNT)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OnrampError'
+        '401':
+          description: Missing or invalid API key/session credentials
+        '403':
+          description: Verified session is required for consumer orders, the browser origin is not allowed, or approved identity verification is required (KYC_REQUIRED)
+        '409':
+          description: Idempotency conflict (IDEMPOTENCY_KEY_REUSED) or insufficient liquidity (INSUFFICIENT_LIQUIDITY)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OnrampError'
+        '415':
+          description: Content type is not application/json
+        '422':
+          description: Amount outside the supported range (AMOUNT_OUT_OF_RANGE)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OnrampError'
+        '503':
+          description: Quote unavailable (QUOTE_UNAVAILABLE) or an external service is unavailable (EXTERNAL_SERVICE_UNAVAILABLE)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OnrampError'
+  /v1/offramps:
+    post:
+      tags: [Orders]
+      operationId: createOfframp
+      summary: Create an XLM to IDR sandbox off-ramp
+      description: |
+        Prices the sell order against current market data, then returns
+        deterministic deposit instructions: send exactly the quoted XLM amount
+        to the deposit account using the returned memo before expiry. After
+        verification and on-chain retirement, the order remains in
+        `withdrawal_processing` because the IDR payout rail is deferred in the
+        current release. No real IDR moves in the sandbox release. Accepts
+        either an API-key principal or a verified retail session principal. A
+        session-authenticated browser mutation requires an exact configured
+        `Origin`, or a matching `Referer` origin when `Origin` is absent.
+      security:
+        - kailoAPIKey: []
+        - kailoSession: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 255
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOfframpRequest'
+      responses:
+        '200':
+          description: Idempotent replay of a previously completed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '201':
+          description: Order created with deposit instructions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '400':
+          description: Malformed request or invalid withdrawal payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OnrampError'
+        '401':
+          description: Missing or invalid API key/session credentials
+        '403':
+          description: Verified session is required for consumer orders, the browser origin is not allowed, or approved identity verification is required (KYC_REQUIRED)
+        '409':
+          description: Idempotency conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OnrampError'
+        '422':
+          description: Resulting payout outside the supported range (AMOUNT_OUT_OF_RANGE)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OnrampError'
+        '503':
+          description: Quote unavailable or external service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OnrampError'
+  /v1/orders:
+    get:
+      tags: [Orders]
+      operationId: listOrders
+      summary: List orders owned by the authenticated principal
+      description: API keys list their client-owned orders; retail sessions list that verified user's consumer orders across valid sessions.
+      security:
+        - kailoAPIKey: []
+        - kailoSession: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+        - name: cursor
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Orders owned by the authenticated API client or retail user
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [orders, next_cursor]
+                properties:
+                  orders:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Order'
+                  next_cursor:
+                    type: string
+  /v1/orders/{id}:
+    get:
+      tags: [Orders]
+      operationId: getOrder
+      summary: Get one order owned by the authenticated principal
+      description: Returns 404 when the order does not exist or belongs to a different API client, retail user, or owner scope.
+      security:
+        - kailoAPIKey: []
+        - kailoSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Order found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '401':
+          description: Missing or invalid API key/session credentials
+        '404':
+          description: Missing or cross-client order (ORDER_NOT_FOUND)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OnrampError'
+  /.well-known/stellar.toml:
+    get:
+      tags: [Anchor discovery]
+      operationId: getStellarToml
+      summary: Get the public Stellar testnet anchor descriptor
+      description: Advertises only the configured sandbox/testnet SEP-24 transfer server, SEP-38 quote server, federation endpoint, and native XLM asset.
+      responses:
+        '200':
+          description: Stellar TOML document
+          content:
+            application/x-stellar-toml:
+              schema:
+                type: string
+  /federation:
+    get:
+      tags: [Anchor discovery]
+      operationId: resolveFederation
+      summary: Resolve a sandbox federation name
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Synthetic federation name in the documented `name*kailopay` form.
+      responses:
+        '200':
+          description: Resolved testnet account and memo
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [stellar_address, memo, memo_type]
+                properties:
+                  stellar_address: {type: string}
+                  memo: {type: string}
+                  memo_type: {type: string, enum: [text]}
+        '404':
+          description: Unknown or malformed federation name
+  /sep24/info:
+    get:
+      tags: [SEP-24]
+      operationId: getSEP24Info
+      summary: Get supported SEP-24 sandbox assets and limits
+      description: Deposit limits use IDR minor units in this sandbox; withdrawal limits use exact XLM units.
+      responses:
+        '200':
+          description: Supported testnet XLM deposit and withdrawal configuration
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deposit, withdraw, fee]
+                properties:
+                  deposit:
+                    $ref: '#/components/schemas/SEP24AssetInfoMap'
+                  withdraw:
+                    $ref: '#/components/schemas/SEP24AssetInfoMap'
+                  fee:
+                    type: object
+  /sep24/transactions/deposit/interactive:
+    post:
+      tags: [SEP-24]
+      summary: Start an authenticated SEP-24 deposit
+      description: Creates a durable wallet-owned interactive session. No on-ramp order is created until the wallet browser links a KailoPay retail session and passes the Persona approval gate. The sandbox uses amount_minor IDR units because the order quote is fiat-denominated.
+      security:
+        - sep10Bearer: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 240
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/SEP24DepositRequest'
+      responses:
+        '200':
+          description: Interactive transaction created or safely replayed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP24StartResponse'
+        '400':
+          description: Invalid request or Stellar destination
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP24Error'
+        '401':
+          description: Missing or invalid SEP-10 bearer credentials
+        '403':
+          description: Approved Persona verification is required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP24Error'
+        '409':
+          description: Idempotency or mapping conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP24Error'
+        '422':
+          description: Amount outside the configured range
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP24Error'
+        '503':
+          description: Quote, gateway, or persistence dependency unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP24Error'
+  /sep24/transactions/withdraw/interactive:
+    post:
+      tags: [SEP-24]
+      summary: Start an authenticated SEP-24 withdrawal
+      description: Creates a durable wallet-owned interactive session. No off-ramp order is created until the wallet browser links a KailoPay retail session and passes the Persona approval gate. The sandbox payout rail uses a synthetic destination token.
+      security:
+        - sep10Bearer: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 240
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/SEP24WithdrawRequest'
+      responses:
+        '200':
+          description: Interactive transaction created or safely replayed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP24StartResponse'
+        '400':
+          description: Invalid withdrawal request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP24Error'
+        '401':
+          description: Missing or invalid SEP-10 bearer credentials
+        '403':
+          description: Approved Persona verification is required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP24Error'
+        '409':
+          description: Idempotency or mapping conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP24Error'
+        '422':
+          description: Resulting payout outside the configured range
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP24Error'
+        '503':
+          description: Quote or persistence dependency unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP24Error'
+  /sep24/transactions:
+    get:
+      tags: [SEP-24]
+      operationId: listSEP24Transactions
+      summary: List owned SEP-24 transactions
+      description: Returns the most recent SEP-24 transaction mappings owned by the SEP-10 wallet account. The current order state is resolved for every mapping; client-supplied status is never trusted.
+      security:
+        - sep10Bearer: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          description: Maximum number of transactions to return.
+        - name: asset_code
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [XLM]
+        - name: kind
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [deposit, withdrawal]
+        - name: no_older_than
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: paging_id
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: lang
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Accepted for SEP-24 wallet compatibility; the sandbox currently returns English messages.
+      responses:
+        '200':
+          description: Recent transactions for the authenticated owner
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP24TransactionListResponse'
+        '400':
+          description: Invalid limit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP24Error'
+        '401':
+          description: Missing or invalid SEP-10 bearer credentials
+        '503':
+          description: Transaction or order storage unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP24Error'
+  /sep24/transaction:
+    get:
+      tags: [SEP-24]
+      operationId: getSEP24Transaction
+      summary: Get the current status of an owned SEP-24 transaction
+      description: Loads the durable wallet-owned transaction-to-order mapping and returns the current order state. Supply exactly one of id, stellar_transaction_id, or external_transaction_id. Client-supplied status values are ignored.
+      security:
+        - sep10Bearer: []
+      parameters:
+        - name: id
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: stellar_transaction_id
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: external_transaction_id
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Current status for the authenticated owner
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP24TransactionResponse'
+        '400':
+          description: Missing or invalid transaction ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP24Error'
+        '401':
+          description: Missing or invalid SEP-10 bearer credentials
+        '404':
+          description: Transaction is missing or belongs to another owner
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP24Error'
+        '503':
+          description: Transaction or order storage unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP24Error'
+  /sep24/interactive/{id}:
+    get:
+      tags: [SEP-24]
+      operationId: getSEP24InteractiveTransaction
+      summary: Get the SEP-24 wallet interactive page or JSON projection
+      description: Loads the opaque browser hand-off token, links the page to the KailoPay retail session when present, and returns either a small HTML page or a JSON projection. The page requires a KailoPay retail login before order creation.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Authenticated sandbox transaction projection
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP24InteractiveResponse'
+        '401':
+          description: A KailoPay retail session is required for completion; the initial page may be loaded with its opaque token.
+        '404':
+          description: Transaction is missing or belongs to another owner
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP24Error'
+            text/html:
+              schema:
+                type: string
+        '410':
+          description: Interactive session expired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP24Error'
+        '405':
+          description: Interactive method is not supported
+    post:
+      tags: [SEP-24]
+      operationId: completeSEP24InteractiveTransaction
+      summary: Complete the SEP-24 browser hand-off
+      description: Uses the KailoPay retail session cookie to link the wallet account, satisfy the Persona approval gate, and create or replay the mapped on-ramp/off-ramp order. Withdrawal completion accepts a synthetic destination_token.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                destination_token:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+      responses:
+        '200':
+          description: Order mapping created or safely replayed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP24TransactionResponse'
+            text/html:
+              schema:
+                type: string
+        '401':
+          description: A KailoPay retail session is required
+        '403':
+          description: Approved Persona verification is required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP24Error'
+        '409':
+          description: Interactive session was already completed by another user or request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP24Error'
+        '410':
+          description: Interactive session expired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP24Error'
+  /sep24/deposit:
+    $ref: '#/paths/~1sep24~1transactions~1deposit~1interactive'
+  /sep24/withdraw:
+    $ref: '#/paths/~1sep24~1transactions~1withdraw~1interactive'
+  /sep38/info:
+    get:
+      tags: [SEP-38]
+      operationId: getSEP38Info
+      summary: Get supported SEP-38 quote assets and delivery methods
+      description: Returns the sandbox quote assets, supported delivery methods, and country metadata for the IDR/native-XLM pair.
+      responses:
+        '200':
+          description: Supported quote assets and delivery methods
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP38InfoResponse'
+  /sep38/prices:
+    get:
+      tags: [SEP-38]
+      operationId: getSEP38Prices
+      summary: Get an indicative SEP-38 price
+      description: Returns the current indicative price for the requested asset pair. Omit one asset to request all supported counter-assets for the specified asset.
+      parameters:
+        - name: sell_asset
+          in: query
+          required: false
+          schema: {type: string, enum: [iso4217:IDR, stellar:native]}
+        - name: buy_asset
+          in: query
+          required: false
+          schema: {type: string, enum: [iso4217:IDR, stellar:native]}
+      responses:
+        '200':
+          description: Indicative prices
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP38PricesResponse'
+        '400':
+          description: Invalid or unsupported asset pair
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP38Error'
+        '503':
+          description: Fresh market data is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP38Error'
+  /sep38/price:
+    get:
+      tags: [SEP-38]
+      operationId: getSEP38Price
+      summary: Calculate a SEP-38 amount-specific price
+      description: Returns an amount-specific calculation. Provide exactly one of sell_amount or buy_amount. IDR uses minor units and native XLM uses up to 7 decimal places.
+      parameters:
+        - name: sell_asset
+          in: query
+          required: true
+          schema: {type: string, enum: [iso4217:IDR, stellar:native]}
+        - name: buy_asset
+          in: query
+          required: true
+          schema: {type: string, enum: [iso4217:IDR, stellar:native]}
+        - name: sell_amount
+          in: query
+          required: false
+          schema: {type: string}
+        - name: buy_amount
+          in: query
+          required: false
+          schema: {type: string}
+      responses:
+        '200':
+          description: Amount-specific quote calculation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP38PriceResponse'
+        '400':
+          description: Invalid pair, amount, or amount range
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP38Error'
+        '503':
+          description: Fresh market data is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP38Error'
+  /sep38/quote:
+    post:
+      tags: [SEP-38]
+      operationId: createSEP38Quote
+      summary: Create an authenticated firm SEP-38 quote
+      description: Creates a short-lived, wallet-owned firm quote for the supported IDR/native-XLM pair. The quote can be used once by a matching SEP-24 wallet flow.
+      security:
+        - sep10Bearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SEP38QuoteRequest'
+      responses:
+        '200':
+          description: Firm quote created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP38QuoteResponse'
+        '400':
+          description: Invalid pair, amount, or delivery method
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP38Error'
+        '401':
+          description: Missing or invalid SEP-10 bearer credentials
+        '503':
+          description: Fresh market data or quote persistence is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP38Error'
+  /sep38/quote/{id}:
+    get:
+      tags: [SEP-38]
+      operationId: getSEP38Quote
+      summary: Retrieve an authenticated firm SEP-38 quote
+      description: Retrieves an unexpired, unconsumed firm quote owned by the SEP-10 wallet account.
+      security:
+        - sep10Bearer: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Firm quote
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP38QuoteResponse'
+        '401':
+          description: Missing or invalid SEP-10 bearer credentials
+        '404':
+          description: Quote is not owned by this wallet or does not exist
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP38Error'
+        '410':
+          description: Quote expired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SEP38Error'
+  /callbacks/kyc/persona:
+    post:
+      tags: [Provider callbacks]
+      operationId: receivePersonaCallback
+      summary: Receive signed Persona identity-verification events
+      description: Verifies the Persona-Signature header over the exact raw JSON body, deduplicates provider events, and updates the local KYC status without storing the raw payload.
+      security:
+        - personaSignature: []
+      parameters:
+        - name: Persona-Signature
+          in: header
+          required: true
+          schema:
+            type: string
+          description: Persona timestamped HMAC signature.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PersonaWebhookRequest'
+      responses:
+        '200':
+          description: Callback accepted, replayed, or safely retained
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonaCallbackAccepted'
+        '400':
+          description: Callback body or event identity conflicts with the stored event
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonaCallbackError'
+        '401':
+          description: Missing, stale, or invalid Persona signature
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonaCallbackError'
+        '503':
+          description: Callback could not be durably processed and may be retried
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonaCallbackError'
+  /callbacks/payments/xendit:
+    post:
+      tags: [Provider callbacks]
+      operationId: receiveXenditCallback
+      summary: Receive an authenticated Xendit payment webhook
+      description: |
+        Accepts Xendit `payment_session.completed`,
+        `payment_session.expired`, and `payment.capture` callbacks. Payment
+        Session callbacks may identify the session with either
+        `data.payment_session_id` or the `data.id` field used by the Xendit
+        dashboard test fixture. The backend correlates a callback by
+        payment-session ID or payment-request ID, re-checks the provider
+        state, and applies the payment transition idempotently before
+        enqueueing Stellar settlement.
+      security:
+        - xenditCallback: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/XenditCallbackRequest'
+      responses:
+        '200':
+          description: Callback accepted, replayed, or safely retained
+        '401':
+          description: Invalid callback token or malformed/unsupported callback payload
+components:
+  securitySchemes:
+    sep10Bearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Short-lived SEP-10 JWT bound to a classic Stellar testnet account.
+    kailoSession:
+      type: apiKey
+      in: cookie
+      name: kailopay_session
+      description: Opaque KailoPay-owned session cookie. Provider tokens are never returned to the browser.
+    kailoAPIKey:
+      type: http
+      scheme: bearer
+      description: KailoPay sandbox key using the pk_test_ prefix.
+    xenditCallback:
+      type: apiKey
+      in: header
+      name: x-callback-token
+    personaSignature:
+      type: apiKey
+      in: header
+      name: Persona-Signature
+      description: Timestamped HMAC signature calculated by Persona over the exact callback body.
+  parameters:
+    DeveloperClientID:
+      name: client_id
+      in: query
+      required: false
+      schema: {type: string, format: uuid}
+      description: Optional client filter. The session owner must own the client.
+    DeveloperFrom:
+      name: from
+      in: query
+      required: false
+      schema: {type: string, format: date-time}
+      description: Inclusive UTC RFC3339 start time.
+    DeveloperTo:
+      name: to
+      in: query
+      required: false
+      schema: {type: string, format: date-time}
+      description: Exclusive UTC RFC3339 end time.
+    DeveloperCurrency:
+      name: currency
+      in: query
+      required: false
+      schema: {type: string, enum: [IDR, XLM]}
+    DeveloperDirection:
+      name: direction
+      in: query
+      required: false
+      schema: {type: string, enum: [onramp, offramp]}
+    DeveloperStatus:
+      name: status
+      in: query
+      required: false
+      schema: {type: string}
+    DeveloperPaymentMethod:
+      name: payment_method
+      in: query
+      required: false
+      schema: {type: string, enum: [xendit, qris, bri_va]}
+    DeveloperLimit:
+      name: limit
+      in: query
+      required: false
+      schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+    DeveloperPagingID:
+      name: paging_id
+      in: query
+      required: false
+      schema: {type: string}
+      description: Opaque cursor returned by the previous page.
+  schemas:
+    SEP10ChallengeResponse:
+      type: object
+      required: [transaction]
+      properties:
+        transaction:
+          type: string
+          description: Unsigned SEP-10 challenge transaction to sign with the wallet account.
+        expires_at: {type: string, format: date-time}
+    SEP10ExchangeRequest:
+      type: object
+      additionalProperties: false
+      required: [transaction]
+      properties:
+        transaction:
+          type: string
+          minLength: 1
+          description: Signed SEP-10 challenge transaction.
+    SEP10TokenResponse:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+          description: Short-lived bearer JWT for the authenticated classic Stellar account.
+        expires_at: {type: string, format: date-time}
+    SEP10Error:
+      type: object
+      required: [error, request_id]
+      properties:
+        error: {type: string}
+        request_id: {type: string}
+    UserProfileResponse:
+      type: object
+      required: [user]
+      properties:
+        user:
+          $ref: '#/components/schemas/UserProfile'
+    UserProfile:
+      type: object
+      required: [id, display_name, email, email_verified, developer_enabled]
+      properties:
+        id:
+          type: string
+          format: uuid
+        display_name:
+          type: string
+        email:
+          type: string
+          format: email
+        email_verified:
+          type: boolean
+        developer_enabled:
+          type: boolean
+        avatar_url:
+          type: string
+          description: Authenticated relative URL for the private profile image; omitted when no avatar exists.
+    UpdateProfileRequest:
+      type: object
+      additionalProperties: false
+      anyOf:
+        - required: [display_name]
+        - required: [developer_enabled]
+      properties:
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        developer_enabled:
+          type: boolean
+    KYCStatusResponse:
+      type: object
+      required: [kyc]
+      properties:
+        kyc:
+          $ref: '#/components/schemas/KYCStatus'
+    KYCStatus:
+      type: object
+      required: [provider, status, provider_status, inquiry_id]
+      properties:
+        provider:
+          type: string
+          enum: [persona]
+        status:
+          type: string
+          enum: [not_started, creating, created, pending, completed, pending_review, approved, declined, failed, expired]
+        provider_status:
+          type: string
+        inquiry_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+        updated_at:
+          type: string
+          format: date-time
+          nullable: true
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        approved_at:
+          type: string
+          format: date-time
+          nullable: true
+    KYCInquiryResponse:
+      type: object
+      required: [inquiry]
+      properties:
+        inquiry:
+          $ref: '#/components/schemas/KYCInquiry'
+    KYCInquiry:
+      type: object
+      required: [status, provider_status, inquiry_id, url, environment_id]
+      properties:
+        status:
+          type: string
+          enum: [created, pending, completed, pending_review, approved, declined, failed, expired]
+        provider_status:
+          type: string
+        inquiry_id:
+          type: string
+        url:
+          type: string
+          format: uri
+          description: Direct Persona hosted verification URL for this inquiry.
+        environment_id:
+          type: string
+        session_token:
+          type: string
+          description: Short-lived Persona embedded-flow session token. Returned only when the server resumes an existing inquiry.
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+    KYCError:
+      type: object
+      required: [error, request_id]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum: [INVALID_REQUEST, KYC_PROVIDER_UNAVAILABLE, KYC_INQUIRY_NOT_FOUND, KYC_REQUIRED, INTERNAL_ERROR]
+            message:
+              type: string
+        request_id:
+          type: string
+    PersonaWebhookRequest:
+      type: object
+      description: Persona JSON:API event payload. The server stores only event identity, timestamps, status, and a hash of the exact body.
+      additionalProperties: true
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [id, type, attributes]
+          properties:
+            id:
+              type: string
+            type:
+              type: string
+              enum: [event]
+            attributes:
+              type: object
+              additionalProperties: true
+    PersonaCallbackAccepted:
+      type: object
+      required: [status, request_id]
+      properties:
+        status:
+          type: string
+          enum: [accepted]
+        request_id:
+          type: string
+    PersonaCallbackError:
+      type: object
+      required: [error, request_id]
+      properties:
+        error:
+          type: object
+          required: [code, message, retryable]
+          properties:
+            code:
+              type: string
+              enum: [INVALID_CALLBACK_BODY, INVALID_CALLBACK_SIGNATURE, CALLBACK_EVENT_CONFLICT, KYC_INQUIRY_NOT_FOUND, CALLBACK_PROCESSING_FAILED]
+            message:
+              type: string
+            retryable:
+              type: boolean
+            details:
+              type: string
+              description: Safe local-development diagnostic. Omitted outside local mode.
+        request_id:
+          type: string
+    CreateAPIKeyRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+    APIKeyMetadata:
+      type: object
+      required: [id, client_id, name, prefix, created_at]
+      properties:
+        id: {type: string, format: uuid}
+        client_id: {type: string, format: uuid}
+        name: {type: string}
+        prefix: {type: string}
+        created_at: {type: string, format: date-time}
+        last_used_at: {type: string, format: date-time}
+        revoked_at: {type: string, format: date-time}
+    CreateAPIKeyResponse:
+      type: object
+      required: [api_key]
+      properties:
+        api_key:
+          type: object
+          required: [id, client_id, prefix, key, created_at]
+          properties:
+            id: {type: string, format: uuid}
+            client_id: {type: string, format: uuid}
+            prefix: {type: string}
+            key:
+              type: string
+              description: One-time plaintext sandbox key.
+            created_at: {type: string, format: date-time}
+    CreateOfframpRequest:
+      type: object
+      additionalProperties: false
+      required: [asset, withdrawal]
+      properties:
+        asset:
+          type: object
+          additionalProperties: false
+          required: [network, code, amount]
+          properties:
+            network:
+              type: string
+              enum: [stellar_testnet]
+            code:
+              type: string
+              enum: [XLM]
+            amount:
+              type: string
+              description: Exact decimal XLM amount with up to 7 fraction digits.
+        withdrawal:
+          type: object
+          additionalProperties: false
+          required: [currency, method]
+          properties:
+            currency:
+              type: string
+              enum: [IDR]
+            method:
+              type: string
+              enum: [sandbox_bank_transfer]
+            destination_token:
+              type: string
+              maxLength: 200
+              description: Synthetic sandbox destination reference; never real bank details.
+    QuotePreviewRequest:
+      oneOf:
+        - $ref: '#/components/schemas/BuyQuotePreviewRequest'
+        - $ref: '#/components/schemas/SellQuotePreviewRequest'
+    BuyQuotePreviewRequest:
+      type: object
+      additionalProperties: false
+      required: [direction, fiat, asset]
+      properties:
+        direction:
+          type: string
+          enum: [buy]
+        fiat:
+          type: object
+          additionalProperties: false
+          required: [currency, amount_minor]
+          properties:
+            currency: {type: string, enum: [IDR]}
+            amount_minor: {type: string, pattern: '^[1-9][0-9]*$'}
+        asset:
+          type: object
+          additionalProperties: false
+          required: [network, code]
+          properties:
+            network: {type: string, enum: [stellar_testnet]}
+            code: {type: string, enum: [XLM]}
+            amount:
+              type: string
+              description: Omit for a buy preview; the backend calculates this value.
+    SellQuotePreviewRequest:
+      type: object
+      additionalProperties: false
+      required: [direction, fiat, asset]
+      properties:
+        direction:
+          type: string
+          enum: [sell]
+        fiat:
+          type: object
+          additionalProperties: false
+          required: [currency]
+          properties:
+            currency: {type: string, enum: [IDR]}
+            amount_minor:
+              type: string
+              description: Omit for a sell preview; the backend calculates this value.
+        asset:
+          type: object
+          additionalProperties: false
+          required: [network, code, amount]
+          properties:
+            network: {type: string, enum: [stellar_testnet]}
+            code: {type: string, enum: [XLM]}
+            amount:
+              type: string
+              description: Exact decimal XLM amount with up to 7 fraction digits.
+    QuotePreviewResponse:
+      type: object
+      required: [quote]
+      properties:
+        quote:
+          type: object
+          required: [direction, environment, network, fiat, asset, rate, adjusted_rate, spread_bps, source_at, expires_at]
+          properties:
+            direction: {type: string, enum: [buy, sell]}
+            environment: {type: string, enum: [sandbox]}
+            network: {type: string, enum: [stellar_testnet]}
+            fiat:
+              type: object
+              required: [currency, amount_minor]
+              properties:
+                currency: {type: string, enum: [IDR]}
+                amount_minor: {type: string}
+            asset:
+              type: object
+              required: [code, amount]
+              properties:
+                code: {type: string, enum: [XLM]}
+                amount: {type: string, pattern: '^[0-9]+\.[0-9]{7}$'}
+            rate: {type: string}
+            adjusted_rate: {type: string}
+            spread_bps: {type: integer}
+            source_at: {type: string, format: date-time}
+            expires_at: {type: string, format: date-time}
+    CreateOnrampRequest:
+      type: object
+      additionalProperties: false
+      required: [fiat, stellar_destination]
+      properties:
+        fiat:
+          type: object
+          required: [currency, amount_minor]
+          properties:
+            currency: {type: string, enum: [IDR]}
+            amount_minor: {type: string, pattern: '^[1-9][0-9]*$'}
+        payment_method:
+          type: string
+          description: xendit opens the hosted checkout with all activated Xendit channels, including QRIS and BRI Virtual Account when enabled on the merchant account; qris and bri_va restrict it to one channel.
+          enum: [xendit, qris, bri_va]
+        stellar_destination:
+          type: object
+          required: [account]
+          properties:
+            account: {type: string, minLength: 56, maxLength: 56}
+            memo: {type: string, nullable: true, maxLength: 28}
+    OrderResponse:
+      type: object
+      required: [order]
+      properties:
+        order:
+          $ref: '#/components/schemas/Order'
+    Order:
+      type: object
+      required: [id, status, environment, network, fiat, asset, quote, payment_method, stellar_destination, created_at, updated_at]
+      properties:
+        id: {type: string, format: uuid}
+        status:
+          type: string
+          enum: [created, payment_pending, payment_confirmed, stellar_processing, completed, expired, payment_failed, stellar_failed, cancelled,
+                 asset_pending, asset_received, asset_invalid, retirement_processing, withdrawal_processing,
+                 retirement_failed, withdrawal_failed]
+        environment: {type: string, enum: [sandbox]}
+        network: {type: string, enum: [stellar_testnet]}
+        fiat:
+          type: object
+          properties:
+            currency: {type: string, enum: [IDR]}
+            amount_minor: {type: string}
+        asset:
+          type: object
+          properties:
+            code: {type: string, enum: [XLM]}
+            amount: {type: string, pattern: '^[0-9]+\.[0-9]{7}$'}
+        quote:
+          type: object
+          properties:
+            rate: {type: string}
+            adjusted_rate: {type: string}
+            spread_bps: {type: integer}
+            source_at: {type: string, format: date-time}
+            expires_at: {type: string, format: date-time}
+        payment_method: {type: string, enum: [xendit, qris, bri_va]}
+        stellar_destination:
+          type: object
+          properties:
+            account: {type: string}
+            memo: {type: string}
+        checkout:
+          type: object
+          properties:
+            id: {type: string}
+            status: {type: string}
+            presentation_type: {type: string, enum: [PAYMENT_LINK, QR_STRING, VIRTUAL_ACCOUNT_NUMBER]}
+            presentation_value: {type: string}
+            payment_link_url: {type: string, format: uri}
+            expires_at: {type: string, format: date-time, nullable: true}
+        stellar_transaction_hash: {type: string}
+        deposit_transaction_hash: {type: string}
+        payout:
+          type: object
+          properties:
+            reference: {type: string}
+            method: {type: string, enum: [sandbox_bank_transfer]}
+            amount_minor: {type: string}
+            state: {type: string, enum: [pending, completed, failed]}
+            simulated: {type: boolean}
+            disclosure: {type: string}
+        failure_code: {type: string}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    ForgotPasswordRequest:
+      type: object
+      additionalProperties: false
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+    RegisterRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        password:
+          type: string
+          minLength: 10
+          maxLength: 128
+        display_name:
+          type: string
+          maxLength: 100
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+    EmailTokenRequest:
+      type: object
+      additionalProperties: false
+      required: [token]
+      properties:
+        token:
+          type: string
+          minLength: 1
+    PasswordResetRequest:
+      type: object
+      additionalProperties: false
+      required: [token, new_password]
+      properties:
+        token:
+          type: string
+          minLength: 1
+        new_password:
+          type: string
+          minLength: 10
+          maxLength: 128
+    PasswordChangeRequest:
+      type: object
+      additionalProperties: false
+      required: [current_password, new_password]
+      properties:
+        current_password:
+          type: string
+        new_password:
+          type: string
+          minLength: 10
+          maxLength: 128
+    UserResponse:
+      type: object
+      required: [user]
+      properties:
+        user:
+          $ref: '#/components/schemas/UserProfile'
+    EnvironmentMetadata:
+      type: object
+      required: [environment]
+      properties:
+        environment:
+          type: string
+          enum: [local, test, sandbox, production]
+    WebhookEventType:
+      type: string
+      enum:
+        - order.created
+        - order.payment_pending
+        - order.payment_confirmed
+        - order.asset_received
+        - order.processing
+        - order.completed
+        - order.failed
+        - order.expired
+    CreateWebhookEndpointRequest:
+      type: object
+      additionalProperties: false
+      required: [url]
+      properties:
+        url:
+          type: string
+          format: uri
+          pattern: '^https://'
+          maxLength: 2048
+          description: HTTPS endpoint with a public host and no embedded credentials.
+        event_types:
+          type: array
+          description: Order events to subscribe to. An omitted or empty list subscribes to every supported event.
+          items:
+            $ref: '#/components/schemas/WebhookEventType'
+    WebhookEndpoint:
+      type: object
+      required: [id, url, status, event_types, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        url:
+          type: string
+          format: uri
+        status:
+          type: string
+          enum: [active, disabled]
+        event_types:
+          type: array
+          items:
+            $ref: '#/components/schemas/WebhookEventType'
+        created_at:
+          type: string
+          format: date-time
+        disabled_at:
+          type: string
+          format: date-time
+          nullable: true
+    CreateWebhookEndpointResponse:
+      type: object
+      required: [endpoint, secret]
+      properties:
+        endpoint:
+          type: object
+          required: [id]
+          properties:
+            id:
+              type: string
+              format: uuid
+        secret:
+          type: string
+          description: One-time plaintext signing secret. Store it securely; it is never returned again.
+    WebhookEndpointListResponse:
+      type: object
+      required: [endpoints]
+      properties:
+        endpoints:
+          type: array
+          items:
+            $ref: '#/components/schemas/WebhookEndpoint'
+    DeveloperOverviewResponse:
+      type: object
+      required: [environment, network, from, to, total_orders, active_orders, completed_orders, failed_orders, buy_orders, sell_orders, gross_idr_minor, asset_volume, fee_idr_minor, net_idr_minor, success_rate, average_completion_seconds, pending_webhook_deliveries, exhausted_webhook_deliveries, recent_orders]
+      properties:
+        environment: {type: string, enum: [sandbox]}
+        network: {type: string, enum: [stellar_testnet]}
+        from: {type: string, format: date-time}
+        to: {type: string, format: date-time}
+        total_orders: {type: integer, format: int64}
+        active_orders: {type: integer, format: int64}
+        completed_orders: {type: integer, format: int64}
+        failed_orders: {type: integer, format: int64}
+        buy_orders: {type: integer, format: int64}
+        sell_orders: {type: integer, format: int64}
+        gross_idr_minor: {type: string}
+        asset_volume: {type: string}
+        fee_idr_minor: {type: string}
+        net_idr_minor: {type: string}
+        success_rate: {type: number, format: double}
+        average_completion_seconds: {type: number, format: double}
+        pending_webhook_deliveries: {type: integer, format: int64}
+        exhausted_webhook_deliveries: {type: integer, format: int64}
+        recent_orders:
+          type: array
+          items: {$ref: '#/components/schemas/DeveloperOrder'}
+    DeveloperAnalyticsResponse:
+      type: object
+      required: [environment, network, from, to, bucket, buckets]
+      properties:
+        environment: {type: string, enum: [sandbox]}
+        network: {type: string, enum: [stellar_testnet]}
+        from: {type: string, format: date-time}
+        to: {type: string, format: date-time}
+        bucket: {type: string, enum: [hour, day, week]}
+        buckets:
+          type: array
+          items: {$ref: '#/components/schemas/DeveloperAnalyticsBucket'}
+    DeveloperAnalyticsBucket:
+      type: object
+      required: [start, end, orders, buy_orders, sell_orders, gross_idr_minor, asset_volume, fee_idr_minor, net_idr_minor, completed_orders, failed_orders, average_completion_seconds, payment_methods, webhook_delivered, webhook_retried, webhook_exhausted]
+      properties:
+        start: {type: string, format: date-time}
+        end: {type: string, format: date-time}
+        orders: {type: integer, format: int64}
+        buy_orders: {type: integer, format: int64}
+        sell_orders: {type: integer, format: int64}
+        gross_idr_minor: {type: string}
+        asset_volume: {type: string}
+        fee_idr_minor: {type: string}
+        net_idr_minor: {type: string}
+        completed_orders: {type: integer, format: int64}
+        failed_orders: {type: integer, format: int64}
+        average_completion_seconds: {type: number, format: double}
+        payment_methods: {type: object, additionalProperties: {type: integer, format: int64}}
+        webhook_delivered: {type: integer, format: int64}
+        webhook_retried: {type: integer, format: int64}
+        webhook_exhausted: {type: integer, format: int64}
+    DeveloperRevenueSummaryResponse:
+      type: object
+      required: [environment, network, from, to, gross_idr_minor, fee_idr_minor, platform_revenue_minor, developer_revenue_minor, net_idr_minor, entry_count, simulated, disclosure]
+      properties:
+        environment: {type: string, enum: [sandbox]}
+        network: {type: string, enum: [stellar_testnet]}
+        from: {type: string, format: date-time}
+        to: {type: string, format: date-time}
+        gross_idr_minor: {type: string}
+        fee_idr_minor: {type: string}
+        platform_revenue_minor: {type: string}
+        developer_revenue_minor: {type: string}
+        net_idr_minor: {type: string}
+        entry_count: {type: integer, format: int64}
+        simulated: {type: boolean}
+        disclosure: {type: string}
+    DeveloperRevenueEntriesResponse:
+      type: object
+      required: [entries, paging_id]
+      properties:
+        entries:
+          type: array
+          items: {$ref: '#/components/schemas/DeveloperRevenueEntry'}
+        paging_id: {type: string, nullable: true}
+    DeveloperRevenueEntry:
+      type: object
+      required: [order_id, client_id, direction, created_at, gross_idr_minor, fee_idr_minor, platform_revenue_minor, developer_revenue_minor, net_idr_minor, asset_amount, asset_amount_stroops, fee_currency, fee_policy_version, source, simulated]
+      properties:
+        order_id: {type: string, format: uuid}
+        client_id: {type: string, format: uuid}
+        direction: {type: string, enum: [onramp, offramp]}
+        created_at: {type: string, format: date-time}
+        gross_idr_minor: {type: string}
+        fee_idr_minor: {type: string}
+        platform_revenue_minor: {type: string}
+        developer_revenue_minor: {type: string}
+        net_idr_minor: {type: string}
+        asset_amount: {type: string}
+        asset_amount_stroops: {type: string}
+        fee_currency: {type: string, enum: [IDR]}
+        fee_policy_version: {type: string}
+        source: {type: string}
+        simulated: {type: boolean}
+    DeveloperOrder:
+      type: object
+      required: [id, client_id, client_name, environment, direction, status, currency, fiat_amount_minor, asset_amount, asset_amount_stroops, payment_method, gateway_provider, gateway_reference, stellar_intent_id, stellar_transaction_hash, sep24_transaction_id, quote_id, wallet_account, payout_reference, payout_simulated, latest_event_type, latest_transition_at, created_at, updated_at]
+      properties:
+        id: {type: string, format: uuid}
+        client_id: {type: string, format: uuid}
+        client_name: {type: string}
+        environment: {type: string, enum: [sandbox]}
+        direction: {type: string, enum: [onramp, offramp]}
+        status: {type: string}
+        currency: {type: string, enum: [IDR]}
+        fiat_amount_minor: {type: string}
+        asset_amount: {type: string}
+        asset_amount_stroops: {type: string}
+        payment_method: {type: string}
+        gateway_provider: {type: string}
+        gateway_reference: {type: string}
+        stellar_intent_id: {type: string}
+        stellar_transaction_hash: {type: string}
+        sep24_transaction_id: {type: string}
+        quote_id: {type: string}
+        wallet_account: {type: string}
+        payout_reference: {type: string}
+        payout_simulated: {type: boolean}
+        payout_disclosure: {type: string}
+        latest_event_type: {type: string}
+        latest_transition_at: {type: string, format: date-time}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+        completed_at: {type: string, format: date-time, nullable: true}
+        failure_code: {type: string}
+        financial: {$ref: '#/components/schemas/DeveloperRevenueEntry'}
+    DeveloperOrdersResponse:
+      type: object
+      required: [orders, paging_id]
+      properties:
+        orders:
+          type: array
+          items: {$ref: '#/components/schemas/DeveloperOrder'}
+        paging_id: {type: string, nullable: true}
+    RegisterDeveloperWalletRequest:
+      type: object
+      additionalProperties: false
+      required: [network, wallet_account, label, sep10_token]
+      properties:
+        client_id: {type: string, format: uuid}
+        network: {type: string, enum: [stellar_testnet]}
+        wallet_account: {type: string, minLength: 56, maxLength: 56}
+        label: {type: string, minLength: 1, maxLength: 100}
+        is_primary: {type: boolean}
+        sep10_token: {type: string, minLength: 1, writeOnly: true}
+    UpdateDeveloperWalletRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        label: {type: string, minLength: 1, maxLength: 100}
+        is_primary: {type: boolean}
+    DeveloperWallet:
+      type: object
+      required: [id, user_id, network, wallet_account, label, is_primary, verification_method, verified_at, status, created_at, updated_at]
+      properties:
+        id: {type: string, format: uuid}
+        user_id: {type: string, format: uuid}
+        client_id: {type: string, format: uuid}
+        network: {type: string, enum: [stellar_testnet]}
+        wallet_account: {type: string}
+        label: {type: string}
+        is_primary: {type: boolean}
+        verification_method: {type: string, enum: [sep10]}
+        verified_at: {type: string, format: date-time}
+        status: {type: string, enum: [active, revoked]}
+        revoked_at: {type: string, format: date-time, nullable: true}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    DeveloperWalletResponse:
+      type: object
+      required: [wallet]
+      properties:
+        wallet: {$ref: '#/components/schemas/DeveloperWallet'}
+    DeveloperWalletListResponse:
+      type: object
+      required: [wallets]
+      properties:
+        wallets:
+          type: array
+          items: {$ref: '#/components/schemas/DeveloperWallet'}
+    WebhookEndpointResponse:
+      type: object
+      required: [endpoint]
+      properties:
+        endpoint: {$ref: '#/components/schemas/WebhookEndpoint'}
+    WebhookQueuedResponse:
+      type: object
+      required: [status, event_id, outbox_id]
+      properties:
+        status: {type: string, enum: [queued]}
+        event_id: {type: string, format: uuid}
+        outbox_id: {type: string, format: uuid}
+    WebhookDelivery:
+      type: object
+      required: [id, event_id, endpoint_id, event_type, attempt_number, status, scheduled_at, created_at]
+      properties:
+        id: {type: string, format: uuid}
+        event_id: {type: string, format: uuid}
+        endpoint_id: {type: string, format: uuid}
+        event_type: {$ref: '#/components/schemas/WebhookEventType'}
+        attempt_number: {type: integer, minimum: 1}
+        status: {type: string, enum: [in_flight, delivered, retry_scheduled, failed, exhausted, superseded]}
+        scheduled_at: {type: string, format: date-time}
+        started_at: {type: string, format: date-time, nullable: true}
+        completed_at: {type: string, format: date-time, nullable: true}
+        http_status: {type: integer, nullable: true}
+        duration_millis: {type: integer, format: int64, nullable: true}
+        safe_error: {type: string, nullable: true}
+        next_attempt_at: {type: string, format: date-time, nullable: true}
+        created_at: {type: string, format: date-time}
+    WebhookDeliveriesResponse:
+      type: object
+      required: [deliveries, paging_id]
+      properties:
+        deliveries:
+          type: array
+          items: {$ref: '#/components/schemas/WebhookDelivery'}
+        paging_id: {type: string, nullable: true}
+    SEP24AssetInfoMap:
+      type: object
+      required: [XLM]
+      properties:
+        XLM:
+          type: object
+          required: [enabled, min_amount, max_amount, amount_unit, fiat_currency]
+          properties:
+            enabled: {type: boolean}
+            min_amount: {type: number}
+            max_amount: {type: number}
+            amount_unit: {type: string, enum: [XLM, idr_minor]}
+            fiat_currency: {type: string, enum: [IDR]}
+    SEP24DepositRequest:
+      type: object
+      additionalProperties: false
+      required: [asset_code, account]
+      properties:
+        asset_code: {type: string, enum: [XLM]}
+        amount_minor:
+          type: string
+          pattern: '^[1-9][0-9]*$'
+          description: Positive IDR minor units; required unless quote_id is supplied.
+        account:
+          type: string
+          minLength: 56
+          maxLength: 56
+          description: Stellar testnet destination account.
+        memo: {type: string, maxLength: 28}
+        memo_type: {type: string, enum: [text]}
+        payment_method: {type: string, enum: [xendit, qris, bri_va]}
+        quote_id:
+          type: string
+          description: Optional authenticated firm SEP-38 quote owned by the wallet.
+    SEP24WithdrawRequest:
+      type: object
+      additionalProperties: false
+      required: [asset_code, amount, destination_token]
+      properties:
+        asset_code: {type: string, enum: [XLM]}
+        amount:
+          type: string
+          pattern: '^[0-9]+(\.[0-9]{1,7})?$'
+          description: Positive exact XLM amount with up to 7 fractional digits.
+        destination_token:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Synthetic sandbox destination reference; never real bank details.
+        quote_id:
+          type: string
+          description: Optional authenticated firm SEP-38 quote owned by the wallet.
+    SEP24StartResponse:
+      type: object
+      required: [type, url, id, kyc_required, environment, network]
+      properties:
+        type: {type: string, enum: [interactive_customer_info_needed]}
+        url: {type: string, format: uri}
+        id: {type: string}
+        kyc_required: {type: boolean}
+        environment: {type: string, enum: [sandbox]}
+        network: {type: string, enum: [stellar_testnet]}
+        payment_link_url: {type: string, format: uri}
+    SEP24Transaction:
+      type: object
+      required: [id, kind, status, started_at, updated_at]
+      properties:
+        id: {type: string}
+        kind: {type: string, enum: [deposit, withdrawal]}
+        status:
+          type: string
+          enum: [pending_user_transfer_start, pending_anchor, pending_external, completed, expired, error]
+        started_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+        stellar_transaction_id: {type: string}
+        withdraw_anchor_account: {type: string}
+        withdraw_memo: {type: string}
+        withdraw_memo_type: {type: string, enum: [text]}
+        amount_in: {type: string}
+        amount_out: {type: string}
+        quote_id: {type: string}
+        external_transaction_id: {type: string}
+        sandbox_disclosure:
+          type: string
+          description: Present for the simulated testnet payout and explicitly states that no real IDR moved.
+        more_info_url: {type: string, format: uri}
+    SEP24TransactionResponse:
+      type: object
+      required: [transaction]
+      properties:
+        transaction:
+          $ref: '#/components/schemas/SEP24Transaction'
+    SEP24TransactionListResponse:
+      type: object
+      required: [transactions]
+      properties:
+        transactions:
+          type: array
+          items:
+            $ref: '#/components/schemas/SEP24Transaction'
+    SEP24InteractiveResponse:
+      type: object
+      required: [environment, network, kyc_required]
+      properties:
+        environment: {type: string, enum: [sandbox]}
+        network: {type: string, enum: [stellar_testnet]}
+        kyc_required: {type: boolean}
+        interactive:
+          type: object
+          description: Durable interactive-session projection returned before order creation.
+          additionalProperties: true
+        transaction:
+          $ref: '#/components/schemas/SEP24Transaction'
+    SEP24Error:
+      type: object
+      required: [error, request_id]
+      properties:
+        error: {type: string}
+        request_id: {type: string}
+    SEP38InfoResponse:
+      type: object
+      required: [assets]
+      properties:
+        assets:
+          type: array
+          items:
+            $ref: '#/components/schemas/SEP38Asset'
+    SEP38Asset:
+      type: object
+      required: [asset]
+      properties:
+        asset: {type: string}
+        sell_delivery_methods:
+          type: array
+          items:
+            $ref: '#/components/schemas/SEP38DeliveryMethod'
+        buy_delivery_methods:
+          type: array
+          items:
+            $ref: '#/components/schemas/SEP38DeliveryMethod'
+        country_codes:
+          type: array
+          items: {type: string}
+    SEP38DeliveryMethod:
+      type: object
+      required: [name, description]
+      properties:
+        name: {type: string}
+        description: {type: string}
+    SEP38PricesResponse:
+      oneOf:
+        - $ref: '#/components/schemas/SEP38BuyPricesResponse'
+        - $ref: '#/components/schemas/SEP38SellPricesResponse'
+    SEP38BuyPricesResponse:
+      type: object
+      required: [buy_assets]
+      properties:
+        buy_assets:
+          type: array
+          items:
+            $ref: '#/components/schemas/SEP38AssetPrice'
+    SEP38SellPricesResponse:
+      type: object
+      required: [sell_assets]
+      properties:
+        sell_assets:
+          type: array
+          items:
+            $ref: '#/components/schemas/SEP38AssetPrice'
+    SEP38AssetPrice:
+      type: object
+      required: [asset, price, decimals]
+      properties:
+        asset: {type: string}
+        price: {type: string}
+        decimals: {type: integer, minimum: 0}
+    SEP38PriceResponse:
+      type: object
+      required: [total_price, price, sell_asset, sell_amount, buy_asset, buy_amount]
+      properties:
+        total_price: {type: string}
+        price: {type: string}
+        sell_asset: {type: string}
+        sell_amount: {type: string}
+        buy_asset: {type: string}
+        buy_amount: {type: string}
+    SEP38QuoteRequest:
+      type: object
+      additionalProperties: false
+      required: [sell_asset, buy_asset]
+      properties:
+        sell_asset: {type: string, enum: [iso4217:IDR, stellar:native]}
+        buy_asset: {type: string, enum: [iso4217:IDR, stellar:native]}
+        sell_amount:
+          type: string
+          description: Exact amount on the sell side. Provide exactly one of sell_amount or buy_amount.
+        buy_amount:
+          type: string
+          description: Exact amount on the buy side. Provide exactly one of sell_amount or buy_amount.
+        sell_delivery_method: {type: string}
+        buy_delivery_method: {type: string}
+    SEP38QuoteResponse:
+      type: object
+      required: [id, quote_id, sell_asset, buy_asset, sell_amount, buy_amount, price, expires_at]
+      properties:
+        id: {type: string}
+        quote_id: {type: string}
+        sell_asset: {type: string}
+        buy_asset: {type: string}
+        sell_amount: {type: string}
+        buy_amount: {type: string}
+        price: {type: string}
+        spread_bps: {type: integer, minimum: 0}
+        delivery_method: {type: string}
+        sell_delivery_method: {type: string}
+        buy_delivery_method: {type: string}
+        expires_at: {type: string, format: date-time}
+    SEP38Error:
+      type: object
+      required: [error, request_id]
+      properties:
+        error: {type: string}
+        request_id: {type: string}
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+    OnrampError:
+      type: object
+      required: [error, request_id]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum: [INVALID_REQUEST, INVALID_STELLAR_ACCOUNT, AMOUNT_OUT_OF_RANGE, INSUFFICIENT_LIQUIDITY,
+                     IDEMPOTENCY_KEY_REUSED, ORDER_NOT_FOUND, CHECKOUT_PENDING_RECONCILIATION,
+                     QUOTE_UNAVAILABLE, EXTERNAL_SERVICE_UNAVAILABLE, KYC_REQUIRED]
+            message:
+              type: string
+        request_id:
+          type: string
+        order_id:
+          type: string
+          format: uuid
+          description: Durable order identifier returned when checkout creation has an unknown provider outcome; poll GET /v1/orders/{id}.
+    XenditCallbackRequest:
+      oneOf:
+        - $ref: '#/components/schemas/XenditPaymentSessionCallback'
+        - $ref: '#/components/schemas/XenditPaymentCaptureCallback'
+    XenditPaymentSessionCallback:
+      type: object
+      additionalProperties: true
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          enum: [payment_session.completed, payment_session.expired]
+        data:
+          type: object
+          additionalProperties: true
+          anyOf:
+            - required: [payment_session_id]
+            - required: [id]
+          properties:
+            id:
+              type: string
+              description: Payment Session identifier used by the Xendit dashboard test fixture.
+            payment_session_id:
+              type: string
+              description: Payment Session identifier used by the provider callback payload.
+    XenditPaymentCaptureCallback:
+      type: object
+      additionalProperties: true
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          enum: [payment.capture]
+        data:
+          type: object
+          additionalProperties: true
+          required: [payment_id]
+          anyOf:
+            - required: [payment_session_id]
+            - required: [payment_request_id]
+          properties:
+            payment_id:
+              type: string
+            payment_session_id:
+              type: string
+            payment_request_id:
+              type: string

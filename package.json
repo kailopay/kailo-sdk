@@ -1,0 +1,33 @@
+{
+  "name": "@kailopay/sdk",
+  "version": "0.1.0",
+  "description": "Official TypeScript SDK for the KailoPay sandbox and Stellar testnet API.",
+  "license": "MIT",
+  "author": "KailoPay contributors",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "tsc -p tsconfig.json && node --test test/**/*.test.mjs",
+    "prepublishOnly": "tsc -p tsconfig.json && node --test test/**/*.test.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}
